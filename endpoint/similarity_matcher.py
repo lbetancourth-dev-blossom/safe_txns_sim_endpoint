@@ -38,14 +38,11 @@ logger.setLevel(logging.INFO)
 # =========================
 
 DEFAULT_THRESHOLD = 0.90
-S3_BUCKET = "blossom-analytics-safe-dev-nv"
-S3_KEY = "safe_txns/data/similarity/SafeTransactionResults.csv"
+DEFAULT_S3_BUCKET = "blossom-analytics-safe-dev-nv"
+DEFAULT_S3_KEY = "safe_txns/data/similarity/SafeTransactionResults.csv"
 
-# Global cache for reference data
-_REFERENCE_DATA = None
-_REFERENCE_VECTORS = None
-_REFERENCE_LABELS = None
-_REFERENCE_IDS = None
+# Global cache for reference data (keyed by s3_uri)
+_REFERENCE_CACHE = {}  # {s3_uri: (df, vectors, labels, ids)}
 
 
 # =========================
@@ -53,27 +50,55 @@ _REFERENCE_IDS = None
 # =========================
 
 def load_reference_data_from_s3(
-    bucket: str = S3_BUCKET,
-    key: str = S3_KEY,
+    bucket: Optional[str] = None,
+    key: Optional[str] = None,
+    s3_uri: Optional[str] = None,
     force_reload: bool = False
 ) -> Tuple[pd.DataFrame, np.ndarray, List[str], List[str]]:
     """
     Load reference transaction data from S3 and extract feature vectors.
     
     Args:
-        bucket: S3 bucket name
-        key: S3 object key
+        bucket: S3 bucket name (overrides default)
+        key: S3 object key (overrides default)
+        s3_uri: Full S3 URI like 's3://bucket/path/file.csv' (takes precedence)
         force_reload: If True, bypass cache and reload from S3
     
     Returns:
         Tuple of (dataframe, feature_vectors, status_labels, transaction_ids)
+    
+    Examples:
+        # Use defaults
+        load_reference_data_from_s3()
+        
+        # Specify bucket and key
+        load_reference_data_from_s3(bucket="my-bucket", key="data/file.csv")
+        
+        # Use S3 URI
+        load_reference_data_from_s3(s3_uri="s3://my-bucket/data/file.csv")
     """
-    global _REFERENCE_DATA, _REFERENCE_VECTORS, _REFERENCE_LABELS, _REFERENCE_IDS
+    global _REFERENCE_CACHE
+    
+    # Parse S3 URI if provided
+    if s3_uri:
+        if not s3_uri.startswith("s3://"):
+            raise ValueError(f"Invalid S3 URI: {s3_uri}. Must start with 's3://'")
+        parts = s3_uri[5:].split("/", 1)
+        if len(parts) != 2:
+            raise ValueError(f"Invalid S3 URI format: {s3_uri}")
+        bucket, key = parts
+    else:
+        # Use provided bucket/key or environment variables or defaults
+        bucket = bucket or os.getenv("SIMILARITY_S3_BUCKET", DEFAULT_S3_BUCKET)
+        key = key or os.getenv("SIMILARITY_S3_KEY", DEFAULT_S3_KEY)
+    
+    # Create cache key
+    cache_key = f"s3://{bucket}/{key}"
     
     # Return cached data if available
-    if not force_reload and _REFERENCE_DATA is not None:
-        logger.info("[SIMILARITY] Using cached reference data")
-        return _REFERENCE_DATA, _REFERENCE_VECTORS, _REFERENCE_LABELS, _REFERENCE_IDS
+    if not force_reload and cache_key in _REFERENCE_CACHE:
+        logger.info(f"[SIMILARITY] Using cached reference data for {cache_key}")
+        return _REFERENCE_CACHE[cache_key]
     
     try:
         logger.info(f"[SIMILARITY] Loading reference data from s3://{bucket}/{key}")
@@ -132,12 +157,12 @@ def load_reference_data_from_s3(
         logger.info(f"[SIMILARITY] Extracted {len(reference_vectors)} valid feature vectors, shape: {reference_vectors.shape}")
         
         # Store in cache
-        _REFERENCE_DATA = df.iloc[valid_indices].reset_index(drop=True)
-        _REFERENCE_VECTORS = reference_vectors
-        _REFERENCE_LABELS = labels
-        _REFERENCE_IDS = transaction_ids
+        ref_df = df.iloc[valid_indices].reset_index(drop=True)
+        cache_data = (ref_df, reference_vectors, labels, transaction_ids)
+        _REFERENCE_CACHE[cache_key] = cache_data
         
-        return _REFERENCE_DATA, _REFERENCE_VECTORS, _REFERENCE_LABELS, _REFERENCE_IDS
+        logger.info(f"[SIMILARITY] Cached reference data for {cache_key}")
+        return cache_data
     
     except Exception as e:
         logger.error(f"[SIMILARITY] Error loading reference data: {e}")
@@ -260,6 +285,9 @@ def find_similar_transaction(
     threshold: float = DEFAULT_THRESHOLD,
     metric: str = "cosine",
     top_k: int = 1,
+    s3_bucket: Optional[str] = None,
+    s3_key: Optional[str] = None,
+    s3_uri: Optional[str] = None,
     force_reload: bool = False
 ) -> Dict[str, Any]:
     """
@@ -270,6 +298,9 @@ def find_similar_transaction(
         threshold: Minimum similarity score to consider a match (0.0-1.0)
         metric: Similarity metric to use ("cosine" or "euclidean")
         top_k: Number of top matches to consider
+        s3_bucket: S3 bucket name (optional, overrides default)
+        s3_key: S3 key path (optional, overrides default)
+        s3_uri: Full S3 URI (optional, takes precedence over bucket/key)
         force_reload: Force reload reference data from S3
     
     Returns:
@@ -278,10 +309,24 @@ def find_similar_transaction(
         - similarity_score: float, similarity score of best match
         - status_warning: str, label from matched transaction or "NONE"
         - top_matches: list of top k matches with scores and labels
+        - s3_source: str, S3 URI used for reference data
     """
     try:
         # Load reference data
-        ref_df, ref_vectors, ref_labels, ref_ids = load_reference_data_from_s3(force_reload=force_reload)
+        ref_df, ref_vectors, ref_labels, ref_ids = load_reference_data_from_s3(
+            bucket=s3_bucket,
+            key=s3_key,
+            s3_uri=s3_uri,
+            force_reload=force_reload
+        )
+        
+        # Determine source URI for logging
+        if s3_uri:
+            source_uri = s3_uri
+        else:
+            bucket = s3_bucket or os.getenv("SIMILARITY_S3_BUCKET", DEFAULT_S3_BUCKET)
+            key = s3_key or os.getenv("SIMILARITY_S3_KEY", DEFAULT_S3_KEY)
+            source_uri = f"s3://{bucket}/{key}"
         
         # Extract query feature vector
         query_vector = _extract_feature_vector(query_result)
@@ -353,7 +398,8 @@ def find_similar_transaction(
             "top_matches": top_matches,
             "threshold_used": threshold,
             "metric_used": metric,
-            "reference_count": len(ref_vectors)
+            "reference_count": len(ref_vectors),
+            "s3_source": source_uri
         }
         
         if matched:
@@ -387,6 +433,9 @@ def find_similar_transactions_batch(
     query_results: List[Dict[str, Any]],
     threshold: float = DEFAULT_THRESHOLD,
     metric: str = "cosine",
+    s3_bucket: Optional[str] = None,
+    s3_key: Optional[str] = None,
+    s3_uri: Optional[str] = None,
     force_reload: bool = False
 ) -> List[Dict[str, Any]]:
     """
@@ -396,6 +445,9 @@ def find_similar_transactions_batch(
         query_results: List of transaction decisionResult dictionaries
         threshold: Minimum similarity score to consider a match
         metric: Similarity metric to use
+        s3_bucket: S3 bucket name (optional, overrides default)
+        s3_key: S3 key path (optional, overrides default)
+        s3_uri: Full S3 URI (optional, takes precedence over bucket/key)
         force_reload: Force reload reference data from S3
     
     Returns:
@@ -403,7 +455,12 @@ def find_similar_transactions_batch(
     """
     try:
         # Load reference data once
-        ref_df, ref_vectors, ref_labels, ref_ids = load_reference_data_from_s3(force_reload=force_reload)
+        ref_df, ref_vectors, ref_labels, ref_ids = load_reference_data_from_s3(
+            bucket=s3_bucket,
+            key=s3_key,
+            s3_uri=s3_uri,
+            force_reload=force_reload
+        )
         
         results = []
         for i, query_result in enumerate(query_results):
@@ -412,6 +469,9 @@ def find_similar_transactions_batch(
                     query_result,
                     threshold=threshold,
                     metric=metric,
+                    s3_bucket=s3_bucket,
+                    s3_key=s3_key,
+                    s3_uri=s3_uri,
                     force_reload=False  # Already loaded
                 )
                 results.append(result)
@@ -442,22 +502,40 @@ def find_similar_transactions_batch(
 # Cache Management
 # =========================
 
-def clear_cache():
-    """Clear the cached reference data. Useful for testing or updates."""
-    global _REFERENCE_DATA, _REFERENCE_VECTORS, _REFERENCE_LABELS, _REFERENCE_IDS
-    _REFERENCE_DATA = None
-    _REFERENCE_VECTORS = None
-    _REFERENCE_LABELS = None
-    _REFERENCE_IDS = None
-    logger.info("[SIMILARITY] Cache cleared")
+def clear_cache(s3_uri: Optional[str] = None):
+    """
+    Clear the cached reference data.
+    
+    Args:
+        s3_uri: Specific S3 URI to clear from cache. If None, clears all cache.
+    """
+    global _REFERENCE_CACHE
+    
+    if s3_uri:
+        if s3_uri in _REFERENCE_CACHE:
+            del _REFERENCE_CACHE[s3_uri]
+            logger.info(f"[SIMILARITY] Cache cleared for {s3_uri}")
+        else:
+            logger.info(f"[SIMILARITY] No cache found for {s3_uri}")
+    else:
+        _REFERENCE_CACHE.clear()
+        logger.info("[SIMILARITY] All cache cleared")
 
 
 def get_cache_info() -> Dict[str, Any]:
     """Get information about the current cache state."""
+    cache_details = {}
+    for uri, (df, vectors, labels, ids) in _REFERENCE_CACHE.items():
+        cache_details[uri] = {
+            "num_references": len(df),
+            "vector_shape": vectors.shape,
+            "num_labels": len(set(labels))
+        }
+    
     return {
-        "is_cached": _REFERENCE_DATA is not None,
-        "num_references": len(_REFERENCE_DATA) if _REFERENCE_DATA is not None else 0,
-        "vector_shape": _REFERENCE_VECTORS.shape if _REFERENCE_VECTORS is not None else None
+        "num_cached_sources": len(_REFERENCE_CACHE),
+        "cached_sources": list(_REFERENCE_CACHE.keys()),
+        "details": cache_details
     }
 
 
@@ -481,6 +559,13 @@ def get_threshold_from_env(default: float = DEFAULT_THRESHOLD) -> float:
         return default
 
 
+def get_s3_config_from_env() -> Tuple[str, str]:
+    """Get S3 bucket and key from environment variables or defaults."""
+    bucket = os.getenv("SIMILARITY_S3_BUCKET", DEFAULT_S3_BUCKET)
+    key = os.getenv("SIMILARITY_S3_KEY", DEFAULT_S3_KEY)
+    return bucket, key
+
+
 # =========================
 # Standalone Testing
 # =========================
@@ -491,13 +576,32 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Test similarity matching")
     parser.add_argument("--threshold", type=float, default=0.90, help="Similarity threshold")
     parser.add_argument("--metric", type=str, default="cosine", choices=["cosine", "euclidean"])
+    parser.add_argument("--s3-bucket", type=str, help="S3 bucket name (overrides default)")
+    parser.add_argument("--s3-key", type=str, help="S3 key path (overrides default)")
+    parser.add_argument("--s3-uri", type=str, help="Full S3 URI like s3://bucket/path/file.csv")
     parser.add_argument("--force-reload", action="store_true", help="Force reload from S3")
     args = parser.parse_args()
     
     # Test loading reference data
     print("\n=== Loading Reference Data ===")
+    
+    # Determine S3 source
+    if args.s3_uri:
+        print(f"Using S3 URI: {args.s3_uri}")
+    elif args.s3_bucket or args.s3_key:
+        bucket = args.s3_bucket or DEFAULT_S3_BUCKET
+        key = args.s3_key or DEFAULT_S3_KEY
+        print(f"Using S3: s3://{bucket}/{key}")
+    else:
+        print(f"Using default: s3://{DEFAULT_S3_BUCKET}/{DEFAULT_S3_KEY}")
+    
     try:
-        df, vectors, labels, txn_ids = load_reference_data_from_s3(force_reload=args.force_reload)
+        df, vectors, labels, txn_ids = load_reference_data_from_s3(
+            bucket=args.s3_bucket,
+            key=args.s3_key,
+            s3_uri=args.s3_uri,
+            force_reload=args.force_reload
+        )
         print(f"✓ Loaded {len(df)} transactions")
         print(f"✓ Feature vector shape: {vectors.shape}")
         print(f"✓ Unique labels: {set(labels)}")
@@ -521,7 +625,10 @@ if __name__ == "__main__":
             match_result = find_similar_transaction(
                 sample_result,
                 threshold=args.threshold,
-                metric=args.metric
+                metric=args.metric,
+                s3_bucket=args.s3_bucket,
+                s3_key=args.s3_key,
+                s3_uri=args.s3_uri
             )
             
             print(f"\nMatch Result:")
