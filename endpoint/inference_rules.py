@@ -1132,8 +1132,8 @@ def predict_fn(input_data, model_artifacts):
                 "top_matches": []
             })
     
-    # Add similarity_info as a column in out_df
-    out_df["similarity_info"] = similarity_results
+    # Similarity matching completed (results used internally for decision override)
+    # similarity_info is NOT included in final output
 
     # ===== Construcción del payload final solicitado =====
     requested_cols = [
@@ -1163,7 +1163,7 @@ def predict_fn(input_data, model_artifacts):
         "cat__access_DESKTOP","cat__access_MOBILE","cat__access_missing",
         # Post
         "Cluster","Distance_to_Centroid","risk_score","risk_decision","is_outlier",
-        "top_contributors","audit_category","audit_explanation","ux_copy","similarity_info"
+        "top_contributors","audit_category","audit_explanation","ux_copy"
     ]
 
     # Garantizar existencia de todas las num__/cat__ (si falta, 0.0)
@@ -1186,7 +1186,7 @@ def predict_fn(input_data, model_artifacts):
     final_df["audit_category"] = out_df["audit_category"]
     final_df["audit_explanation"] = out_df["audit_explanation"]
     final_df["ux_copy"] = out_df["ux_copy"]
-    final_df["similarity_info"] = out_df["similarity_info"]
+    # similarity_info removed from output (used only internally for decision override)
 
     # Reorden final exacto
     final_df = final_df[requested_cols]
