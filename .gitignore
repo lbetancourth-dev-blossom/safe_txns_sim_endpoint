@@ -64,6 +64,10 @@ endpoint/model_files/
 *.xlsx
 *.json
 !requirements.json
+!package.json
+
+# But allow test reference data
+!data/reference_test.csv
 
 # Logs
 *.log
