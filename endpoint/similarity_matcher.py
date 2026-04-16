@@ -131,80 +131,127 @@ def load_reference_data_from_s3(
         if missing_cols:
             raise ValueError(f"Missing required columns: {missing_cols}")
         
-        # Parse metadata.decisionResult (JSON)
+        # Parse metadata.decisionResult (JSON) and filter invalid records
         vectors = []
         labels = []
         transaction_ids = []
         valid_indices = []
+        skipped_count = 0
+        skip_reasons = {
+            "parse_error": 0,
+            "missing_metadata": 0,
+            "missing_decisionResult": 0,
+            "schema_invalid": 0,
+            "feature_extraction_failed": 0
+        }
         
         for idx, row in df.iterrows():
             try:
+                # Check for metadata field
+                if "metadata" not in row or pd.isna(row.get("metadata")):
+                    skip_reasons["missing_metadata"] += 1
+                    skipped_count += 1
+                    logger.debug(f"[SIMILARITY] Skipping row {idx}: missing metadata")
+                    continue
+                
                 # Parse metadata JSON
                 metadata = row.get("metadata", "{}")
                 if isinstance(metadata, str):
-                    metadata_dict = json.loads(metadata)
+                    try:
+                        metadata_dict = json.loads(metadata)
+                    except json.JSONDecodeError as e:
+                        skip_reasons["parse_error"] += 1
+                        skipped_count += 1
+                        logger.debug(f"[SIMILARITY] Skipping row {idx}: JSON parse error - {e}")
+                        continue
                 else:
                     metadata_dict = metadata
                 
                 # Extract decisionResult
+                if "decisionResult" not in metadata_dict:
+                    skip_reasons["missing_decisionResult"] += 1
+                    skipped_count += 1
+                    logger.debug(f"[SIMILARITY] Skipping row {idx}: missing decisionResult")
+                    continue
+                
                 decision_result = metadata_dict.get("decisionResult", {})
                 
-                # Convert to feature vector
-                feature_vector = _extract_feature_vector(decision_result)
+                # Validate schema if validator is available
+                if HAS_SCHEMA_VALIDATOR:
+                    is_valid, missing, extra = validate_decision_result_schema(
+                        decision_result,
+                        strict=False,
+                        require_all=False
+                    )
+                    
+                    if not is_valid:
+                        skip_reasons["schema_invalid"] += 1
+                        skipped_count += 1
+                        logger.debug(
+                            f"[SIMILARITY] Skipping row {idx}: invalid schema - "
+                            f"missing core fields: {missing}"
+                        )
+                        continue
                 
-                if feature_vector is not None and len(feature_vector) > 0:
-                    vectors.append(feature_vector)
-                    labels.append(str(row.get("statusWarning", "UNKNOWN")))
-                    # Extract TransactionID (try multiple possible column names)
-                    txn_id = row.get("TransactionID") or row.get("transactionId") or row.get("transaction_id") or str(idx)
-                    transaction_ids.append(str(txn_id))
-                    valid_indices.append(idx)
+                # Convert to feature vector
+                feature_vector = _extract_feature_vector(decision_result, validate_schema=False)
+                
+                if feature_vector is None or len(feature_vector) == 0:
+                    skip_reasons["feature_extraction_failed"] += 1
+                    skipped_count += 1
+                    logger.debug(f"[SIMILARITY] Skipping row {idx}: feature extraction failed")
+                    continue
+                
+                # Record is valid - add to reference dataset
+                vectors.append(feature_vector)
+                labels.append(str(row.get("statusWarning", "UNKNOWN")))
+                # Extract TransactionID (try multiple possible column names)
+                txn_id = row.get("TransactionID") or row.get("transactionId") or row.get("transaction_id") or str(idx)
+                transaction_ids.append(str(txn_id))
+                valid_indices.append(idx)
             
             except Exception as e:
-                logger.warning(f"[SIMILARITY] Failed to parse row {idx}: {e}")
+                skip_reasons["parse_error"] += 1
+                skipped_count += 1
+                logger.debug(f"[SIMILARITY] Skipping row {idx}: unexpected error - {e}")
                 continue
         
+        # Log filtering summary
+        total_rows = len(df)
+        valid_rows = len(vectors)
+        logger.info(
+            f"[SIMILARITY] Filtered reference data: {valid_rows}/{total_rows} records valid "
+            f"({valid_rows/total_rows*100:.1f}%), {skipped_count} skipped"
+        )
+        
+        if skipped_count > 0:
+            logger.info(f"[SIMILARITY] Skip reasons: {skip_reasons}")
+        
         if len(vectors) == 0:
-            raise ValueError("No valid feature vectors extracted from reference data")
+            raise ValueError(
+                f"No valid feature vectors extracted from reference data. "
+                f"Total rows: {total_rows}, all records were skipped. "
+                f"Reasons: {skip_reasons}"
+            )
         
         # Convert to numpy array
         reference_vectors = np.array(vectors)
         logger.info(
-            f"[SIMILARITY] Extracted {len(reference_vectors)} valid feature vectors, "
+            f"[SIMILARITY] Successfully loaded {len(reference_vectors)} valid reference vectors, "
             f"shape: {reference_vectors.shape}"
         )
         
-        # Validate reference data schema if validator is available
-        if HAS_SCHEMA_VALIDATOR:
-            logger.info("[SIMILARITY] Validating reference data schema...")
-            is_valid, validation_report = validate_s3_reference_data(
-                df.to_dict(orient="records"),
-                min_coverage=0.8  # At least 80% of records must have valid schema
-            )
-            
-            if is_valid:
-                logger.info(
-                    f"[SIMILARITY] Schema validation passed: "
-                    f"{validation_report['valid_records']}/{validation_report['total_records']} "
-                    f"records valid ({validation_report['coverage_rate']:.1%})"
-                )
-            else:
-                logger.warning(
-                    f"[SIMILARITY] Schema validation warning: "
-                    f"Only {validation_report['coverage_rate']:.1%} records have valid schema "
-                    f"(minimum required: {validation_report['min_coverage_required']:.1%})"
-                )
-                if validation_report.get('schema_issues'):
-                    logger.warning(
-                        f"[SIMILARITY] First issues: {validation_report['schema_issues'][:3]}"
-                    )
-        
-        # Store in cache
+        # Store in cache (only valid records)
         ref_df = df.iloc[valid_indices].reset_index(drop=True)
         cache_data = (ref_df, reference_vectors, labels, transaction_ids)
         _REFERENCE_CACHE[cache_key] = cache_data
         
-        logger.info(f"[SIMILARITY] Cached reference data for {cache_key}")
+        # Log cache summary with filtering stats
+        logger.info(
+            f"[SIMILARITY] Cached {len(reference_vectors)} valid records for {cache_key} "
+            f"(filtered out {skipped_count} invalid records)"
+        )
+        
         return cache_data
     
     except Exception as e:

@@ -194,7 +194,53 @@ def predict_fn(input_data, model):
     return output_data
 ```
 
-## Response Format
+## Validation and Filtering
+
+The similarity matcher **automatically filters** reference data from S3:
+
+### Automatic Filtering Process
+
+When loading reference data, the system validates each record and:
+
+✅ **Includes** records that:
+- Have valid `metadata` field
+- Can parse JSON correctly
+- Have `decisionResult` in metadata
+- Pass schema validation (have core fields: Cluster, Distance_to_Centroid, risk_score, is_outlier)
+- Can extract feature vector successfully
+
+❌ **Excludes** records that:
+- Missing or invalid `metadata` field
+- Cannot parse JSON (malformed)
+- Missing `decisionResult` field
+- Fail schema validation (missing core fields)
+- Cannot extract features
+
+### Filtering Results
+
+The system logs filtering statistics:
+
+```
+[SIMILARITY] Filtered reference data: 850/1000 records valid (85.0%), 150 skipped
+[SIMILARITY] Skip reasons: {
+    'parse_error': 10,
+    'missing_metadata': 5,
+    'missing_decisionResult': 15,
+    'schema_invalid': 100,
+    'feature_extraction_failed': 20
+}
+```
+
+### Minimum Viable Dataset
+
+If **all records are filtered out**, the system raises an error:
+
+```
+ValueError: No valid feature vectors extracted from reference data.
+Total rows: 1000, all records were skipped.
+```
+
+**Recommendation:** Ensure at least 80% of records pass validation for reliable similarity matching.
 
 ```json
 {

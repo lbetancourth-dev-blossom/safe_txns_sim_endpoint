@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Automatic Record Filtering for Invalid S3 Data** (2026-04-16)
+  - Automatically filters out S3 records that don't match validation schema
+  - Only includes records with valid metadata.decisionResult structure
+  - Logs detailed skip statistics (parse errors, missing fields, schema issues)
+  - Raises clear error if all records are invalid
+  
+- **Comprehensive Data Validation System** (2026-04-15)
+  - Added `schema_validator.py` for schema definition and validation
+  - Added `validate_s3_data.py` CLI tool for pre-upload validation
+  - Added `DATA_PREPARATION.md` guide for reference data preparation
+  - Integrated automatic validation in similarity_matcher.py
+
 - **Flexible S3 Configuration for Similarity Matcher** (2026-04-15)
   - Added support for custom S3 paths via function parameters
   - Added support for full S3 URI (e.g., `s3://bucket/path/file.csv`)
@@ -16,10 +28,22 @@ All notable changes to this project will be documented in this file.
   - Created comprehensive usage documentation (`SIMILARITY_USAGE.md`)
 
 ### Changed
+- **Similarity Matcher Filtering** (2026-04-16)
+  - Changed from warning on invalid records to automatic filtering
+  - Only valid records are used for similarity matching
+  - Invalid records are silently skipped with detailed logging
+  
 - **Similarity Matcher Cache System**
   - Changed from single global cache to dictionary-based cache (keyed by S3 URI)
   - Cache now supports multiple reference datasets simultaneously
   - `clear_cache()` now accepts optional `s3_uri` parameter to clear specific cache
+
+### Skip Reasons Tracked
+1. `parse_error`: JSON parsing failures
+2. `missing_metadata`: No metadata field in record
+3. `missing_decisionResult`: No decisionResult in metadata
+4. `schema_invalid`: Missing core fields (Cluster, Distance_to_Centroid, etc.)
+5. `feature_extraction_failed`: Cannot extract feature vector
 
 ### Configuration Priority
 1. `s3_uri` parameter (highest priority)
