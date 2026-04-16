@@ -69,7 +69,25 @@ DEFAULT_S3_BUCKET = "blossom-analytics-safe-dev-nv"
 DEFAULT_S3_KEY = "safe_txns/similarity/data/SafeTransactionResults/"  # Parquet directory
 
 # Global cache for reference data (keyed by s3_uri or local path)
-_REFERENCE_CACHE = {}  # {s3_uri or file_path: (df, vectors, labels, ids)}
+# Cache structure: {cache_key: {'data': (df, vectors, labels, ids), 'file_count': int}}
+_REFERENCE_CACHE = {}
+
+
+def _count_parquet_files_in_s3(s3_client, bucket: str, prefix: str) -> int:
+    """Count number of parquet files in S3 directory"""
+    if not prefix.endswith('/'):
+        prefix = prefix + '/'
+    
+    try:
+        response = s3_client.list_objects_v2(Bucket=bucket, Prefix=prefix)
+        if 'Contents' not in response:
+            return 0
+        
+        count = sum(1 for obj in response['Contents'] if obj['Key'].endswith('.parquet'))
+        return count
+    except Exception as e:
+        logger.warning(f"[SIMILARITY] Failed to count S3 files: {e}")
+        return 0
 
 
 # =========================
@@ -163,7 +181,7 @@ def _load_from_local_csv(csv_path: str) -> Tuple[pd.DataFrame, np.ndarray, np.nd
     # Check cache
     if csv_path in _REFERENCE_CACHE:
         logger.info(f"[SIMILARITY] Using cached data from {csv_path}")
-        return _REFERENCE_CACHE[csv_path]
+        return _REFERENCE_CACHE[csv_path]['data']
     
     logger.info(f"[SIMILARITY] Loading reference data from local file: {csv_path}")
     
@@ -244,8 +262,11 @@ def _load_from_local_csv(csv_path: str) -> Tuple[pd.DataFrame, np.ndarray, np.nd
     logger.info(f"[SIMILARITY] Successfully loaded {len(feature_vectors)} valid records")
     logger.info(f"[SIMILARITY] Feature vector shape: {feature_matrix.shape}")
     
-    # Cache the result
-    _REFERENCE_CACHE[csv_path] = (df, feature_matrix, label_array, id_array)
+    # Cache the result (CSV files don't track file count)
+    _REFERENCE_CACHE[csv_path] = {
+        'data': (df, feature_matrix, label_array, id_array),
+        'file_count': 0
+    }
     
     return df, feature_matrix, label_array, id_array
 
@@ -304,12 +325,44 @@ def load_reference_data_from_s3(
     # Return cached data if available
     if not force_reload and cache_key in _REFERENCE_CACHE:
         logger.info(f"[SIMILARITY] Using cached reference data for {cache_key}")
-        return _REFERENCE_CACHE[cache_key]
+        return _REFERENCE_CACHE[cache_key]['data']  # Return the tuple, not the dict
     
     try:
         s3_client = boto3.client("s3")
         
-        # Determine if we're reading CSV, single parquet, or parquet directory
+        # Create cache key
+        cache_key = f"s3://{bucket}/{key}"
+        
+        # Check if we need to reload:
+        # 1. If force_reload is True
+        # 2. If cache doesn't exist
+        # 3. If it's a parquet directory and file count has changed
+        need_reload = force_reload or cache_key not in _REFERENCE_CACHE
+        
+        if not need_reload and key.endswith('/'):
+            # It's a parquet directory - check if file count changed
+            current_count = _count_parquet_files_in_s3(s3_client, bucket, key)
+            cached_count = _REFERENCE_CACHE[cache_key].get('file_count', 0)
+            
+            if current_count != cached_count:
+                logger.info(
+                    f"[SIMILARITY] S3 data changed: {cached_count} -> {current_count} files. "
+                    f"Reloading..."
+                )
+                need_reload = True
+            else:
+                logger.debug(
+                    f"[SIMILARITY] S3 file count unchanged ({current_count} files). Using cache."
+                )
+        
+        # Return cached data if no reload needed
+        if not need_reload:
+            logger.info(f"[SIMILARITY] Using cached reference data for {cache_key}")
+            cached_data = _REFERENCE_CACHE[cache_key]['data']
+            return cached_data  # Returns tuple of (df, vectors, labels, ids)
+        
+        # Reload data from S3
+        logger.info(f"[SIMILARITY] Loading reference data from s3://{bucket}/{key}")
         if key.endswith('.csv'):
             # CSV file
             logger.info(f"[SIMILARITY] Loading CSV from s3://{bucket}/{key}")
@@ -449,8 +502,11 @@ def load_reference_data_from_s3(
                 f"Reasons: {skip_reasons}"
             )
         
-        # Convert to numpy array
+        # Convert to numpy arrays
         reference_vectors = np.array(vectors)
+        labels_array = np.array(labels)
+        ids_array = np.array(transaction_ids)
+        
         logger.info(
             f"[SIMILARITY] Successfully loaded {len(reference_vectors)} valid reference vectors, "
             f"shape: {reference_vectors.shape}"
@@ -458,7 +514,18 @@ def load_reference_data_from_s3(
         
         # Store in cache (only valid records)
         ref_df = df.iloc[valid_indices].reset_index(drop=True)
-        cache_data = (ref_df, reference_vectors, labels, transaction_ids)
+        
+        # Cache the result with file count for parquet directories
+        cache_data = {
+            'data': (ref_df, reference_vectors, labels_array, ids_array),
+            'file_count': 0  # Default for CSV or single parquet
+        }
+        
+        # If it's a parquet directory, store the file count
+        if key.endswith('/'):
+            cache_data['file_count'] = _count_parquet_files_in_s3(s3_client, bucket, key)
+            logger.info(f"[SIMILARITY] Cached {cache_data['file_count']} parquet files")
+        
         _REFERENCE_CACHE[cache_key] = cache_data
         
         # Log cache summary with filtering stats
@@ -467,7 +534,7 @@ def load_reference_data_from_s3(
             f"(filtered out {skipped_count} invalid records)"
         )
         
-        return cache_data
+        return ref_df, reference_vectors, labels_array, ids_array
     
     except Exception as e:
         logger.error(f"[SIMILARITY] Error loading reference data: {e}")
