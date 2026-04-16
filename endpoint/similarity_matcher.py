@@ -305,9 +305,20 @@ def load_reference_data_from_s3(
                     logger.debug(f"[SIMILARITY] Skipping row {idx}: feature extraction failed")
                     continue
                 
+                # Filter by statusWarning - ONLY accept SAFE or RISKY
+                status_warning = str(row.get("statusWarning", "")).strip().upper()
+                if status_warning not in ["SAFE", "RISKY"]:
+                    skip_reasons["schema_invalid"] += 1
+                    skipped_count += 1
+                    logger.debug(
+                        f"[SIMILARITY] Skipping row {idx}: invalid statusWarning '{status_warning}' "
+                        f"(must be SAFE or RISKY)"
+                    )
+                    continue
+                
                 # Record is valid - add to reference dataset
                 vectors.append(feature_vector)
-                labels.append(str(row.get("statusWarning", "UNKNOWN")))
+                labels.append(status_warning)
                 # Extract TransactionID (try multiple possible column names)
                 txn_id = row.get("TransactionID") or row.get("transactionId") or row.get("transaction_id") or str(idx)
                 transaction_ids.append(str(txn_id))
@@ -571,14 +582,12 @@ def find_similar_transaction(
         top_indices = np.argsort(similarities)[::-1][:top_k]
         top_scores = similarities[top_indices]
         
-        # Build top matches list
+        # Build top matches list (without TransactionID)
         top_matches = []
         for idx, score in zip(top_indices, top_scores):
             top_matches.append({
-                "TransactionID": ref_ids[idx],
                 "similarity_score": float(score),
-                "status_warning": ref_labels[idx],
-                "index": int(idx)
+                "status_warning": ref_labels[idx]
             })
         
         # Get best match

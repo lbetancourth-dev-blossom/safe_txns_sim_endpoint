@@ -43,11 +43,14 @@ This document describes the similarity matching integration with the SageMaker e
 
 ### 2. Automatic Schema Validation & Filtering
 - Each S3 record is validated for complete num__ and cat__ features
+- **IMPORTANT:** Only records with `statusWarning` = "SAFE" or "RISKY" are included
+- Records with other statusWarning values (e.g., "UNKNOWN", "PENDING") are **automatically skipped**
 - Records missing any required feature are **automatically skipped**
 - Detailed skip statistics logged:
   - `parse_error`: JSON parsing failed
   - `missing_metadata`: No metadata field
   - `missing_decisionResult`: No decisionResult in metadata
+  - `schema_invalid`: Invalid statusWarning or insufficient features
   - `schema_invalid`: Missing num__ or cat__ features
   - `feature_extraction_failed`: Unable to extract feature vector
 

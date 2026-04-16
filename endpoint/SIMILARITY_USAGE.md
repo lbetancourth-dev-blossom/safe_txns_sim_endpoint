@@ -246,25 +246,19 @@ Total rows: 1000, all records were skipped.
 {
     "matched": true,
     "similarity_score": 0.95,
-    "status_warning": "HIGH_RISK",
+    "status_warning": "SAFE",
     "top_matches": [
         {
-            "TransactionID": "78901",
             "similarity_score": 0.95,
-            "status_warning": "HIGH_RISK",
-            "index": 42
+            "status_warning": "SAFE"
         },
         {
-            "TransactionID": "78902",
             "similarity_score": 0.88,
-            "status_warning": "MEDIUM_RISK",
-            "index": 15
+            "status_warning": "RISKY"
         },
         {
-            "TransactionID": "78903",
             "similarity_score": 0.82,
-            "status_warning": "HIGH_RISK",
-            "index": 99
+            "status_warning": "SAFE"
         }
     ],
     "threshold_used": 0.90,
@@ -273,6 +267,8 @@ Total rows: 1000, all records were skipped.
     "s3_source": "s3://blossom-analytics-safe-dev-nv/safe_txns/data/similarity/SafeTransactionResults.csv"
 }
 ```
+
+**Note:** `top_matches` only includes `similarity_score` and `status_warning` fields. TransactionID has been removed for privacy and simplicity.
 
 ## Configuration Priority
 
