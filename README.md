@@ -2,13 +2,14 @@
 
 ## Descripción General
 
-Este proyecto implementa un **endpoint de predicción en Amazon SageMaker** para detección de fraude en transacciones financieras. El sistema combina un modelo de clustering K-Means con un sistema de reglas estadísticas para evaluar el riesgo de cada transacción en tiempo real o por lotes.
+Este proyecto implementa un **endpoint de predicción en Amazon SageMaker** para detección de fraude en transacciones financieras. El sistema combina un modelo de clustering K-Means, matching de similitud con transacciones históricas y reglas estadísticas para evaluar el riesgo de cada transacción en tiempo real o por lotes.
 
 ### Características Principales
 
 - **Modelo de ML**: K-Means clustering para detectar patrones anómalos en transacciones
+- **Similarity Matching**: Comparación con transacciones históricas para detectar patrones conocidos
 - **Sistema de Reglas**: Reglas estadísticas (v8) para evaluación de riesgo basada en comportamiento histórico
-- **Política Híbrida**: Combinación de clustering + reglas para decisiones más robustas
+- **Política Híbrida**: Combinación de clustering + similitud + reglas para decisiones más robustas
 - **Scoring en Tiempo Real**: Capacidad de procesar transacciones individuales o en lote
 - **Decisiones Multinivel**: Accept, User Auth, Admin Review, Reject
 
@@ -39,19 +40,29 @@ Este proyecto implementa un **endpoint de predicción en Amazon SageMaker** para
 │  │  2. K-Means Clustering                               │  │
 │  │     - Asignación de cluster                          │  │
 │  │     - Cálculo de distancia al centroide             │  │
+│  │     - Extracción de features (num__ + cat__)         │  │
 │  └──────────────────────────────────────────────────────┘  │
 │                         │                                   │
 │                         ▼                                   │
 │  ┌──────────────────────────────────────────────────────┐  │
-│  │  3. Sistema de Reglas Estadísticas (v8)            │  │
+│  │  3. Similarity Matching (NEW!)                      │  │
+│  │     - Comparación con histórico en S3                │  │
+│  │     - Validación de esquema flexible                 │  │
+│  │     - Cálculo de similitud (cosine)                  │  │
+│  │     - Override si similitud >= threshold (0.90)      │  │
+│  └──────────────────────────────────────────────────────┘  │
+│                         │                                   │
+│                         ▼                                   │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │  4. Sistema de Reglas Estadísticas (v8)            │  │
 │  │     - Evaluación de 12 reglas de fraude             │  │
 │  │     - Scoring normalizado (0-100)                    │  │
 │  └──────────────────────────────────────────────────────┘  │
 │                         │                                   │
 │                         ▼                                   │
 │  ┌──────────────────────────────────────────────────────┐  │
-│  │  4. Política Híbrida y Decisión Final              │  │
-│  │     - Combinación de cluster + reglas                │  │
+│  │  5. Política Híbrida y Decisión Final              │  │
+│  │     - Combinación: cluster + similitud + reglas      │  │
 │  │     - Clasificación de riesgo                        │  │
 │  │     - Generación de explicaciones                    │  │
 │  └──────────────────────────────────────────────────────┘  │
@@ -62,6 +73,7 @@ Este proyecto implementa un **endpoint de predicción en Amazon SageMaker** para
 │                Output: JSON/CSV                              │
 │  - Cluster, Distancia, Risk Score, Decisión                 │
 │  - Features preprocesados                                    │
+│  - Información de similitud (matched, score, status)         │
 │  - Explicaciones y recomendaciones UX                        │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -75,11 +87,27 @@ Este proyecto implementa un **endpoint de predicción en Amazon SageMaker** para
 ```
 safe_txns_sim_endpoint/
 │
-├── safe-txn-enpoint.ipynb      # Notebook principal para deploy y pruebas
+├── README.md                          # Este archivo
+├── safe-txn-enpoint.ipynb            # Notebook principal para deploy y pruebas
 │
-└── endpoint/
-    ├── inference_rules.py      # Script principal de inferencia para SageMaker
-    └── statistical_rules.py    # Sistema de reglas estadísticas v8
+├── endpoint/
+│   ├── inference_rules.py            # Script principal de inferencia para SageMaker
+│   ├── similarity_matcher.py         # Motor de matching de similitud
+│   ├── schema_validator.py           # Validación de esquema de features
+│   └── statistical_rules.py          # Sistema de reglas estadísticas v8
+│
+├── test/
+│   ├── test_e2e_with_s3.py          # Test end-to-end con datos reales de S3
+│   ├── test_inference_integration.py # Tests de integración
+│   └── test_local_integration.py     # Tests locales
+│
+├── data/
+│   └── transactions_test.csv         # Datos de prueba
+│
+└── docs/
+    ├── CHANGELOG.md                  # Historial de cambios
+    ├── DATA_PREPARATION.md           # Guía de preparación de datos
+    └── SIMILARITY_INTEGRATION.md     # Documentación de similarity matching
 ```
 
 ### Descripción de Scripts
