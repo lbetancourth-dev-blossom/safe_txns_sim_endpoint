@@ -26,8 +26,16 @@ import numpy as np
 from typing import Dict, List, Tuple, Optional, Any
 from sklearn.metrics.pairwise import cosine_similarity
 import boto3
-from io import StringIO
+from io import StringIO, BytesIO
 import logging
+
+# Try to import pyarrow for parquet support
+try:
+    import pyarrow.parquet as pq
+    HAS_PARQUET = True
+except ImportError:
+    HAS_PARQUET = False
+    logger.warning("[SIMILARITY] pyarrow not available. Parquet support disabled.")
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -58,10 +66,82 @@ except ImportError as e:
 
 DEFAULT_THRESHOLD = 0.90
 DEFAULT_S3_BUCKET = "blossom-analytics-safe-dev-nv"
-DEFAULT_S3_KEY = "safe_txns/data/similarity/SafeTransactionResults.csv"
+DEFAULT_S3_KEY = "safe_txns/similarity/data/SafeTransactionResults/"  # Parquet directory
 
 # Global cache for reference data (keyed by s3_uri or local path)
 _REFERENCE_CACHE = {}  # {s3_uri or file_path: (df, vectors, labels, ids)}
+
+
+# =========================
+# Helper Functions
+# =========================
+
+def _load_csv_from_s3(s3_client, bucket: str, key: str) -> pd.DataFrame:
+    """Load CSV file from S3"""
+    response = s3_client.get_object(Bucket=bucket, Key=key)
+    csv_content = response["Body"].read().decode("utf-8")
+    return pd.read_csv(StringIO(csv_content))
+
+
+def _load_parquet_from_s3(s3_client, bucket: str, key: str) -> pd.DataFrame:
+    """Load single parquet file from S3"""
+    if not HAS_PARQUET:
+        raise ImportError("pyarrow is required for parquet support. Install with: pip install pyarrow")
+    
+    response = s3_client.get_object(Bucket=bucket, Key=key)
+    parquet_data = response["Body"].read()
+    table = pq.read_table(BytesIO(parquet_data))
+    return table.to_pandas()
+
+
+def _load_parquet_directory_from_s3(s3_client, bucket: str, prefix: str) -> pd.DataFrame:
+    """Load all parquet files from an S3 directory/prefix"""
+    if not HAS_PARQUET:
+        raise ImportError("pyarrow is required for parquet support. Install with: pip install pyarrow")
+    
+    # Ensure prefix ends with /
+    if not prefix.endswith('/'):
+        prefix = prefix + '/'
+    
+    # List all parquet files in the directory
+    logger.info(f"[SIMILARITY] Listing parquet files in s3://{bucket}/{prefix}")
+    response = s3_client.list_objects_v2(Bucket=bucket, Prefix=prefix)
+    
+    if 'Contents' not in response:
+        raise FileNotFoundError(f"No files found in s3://{bucket}/{prefix}")
+    
+    parquet_files = [
+        obj['Key'] for obj in response['Contents'] 
+        if obj['Key'].endswith('.parquet')
+    ]
+    
+    if not parquet_files:
+        raise FileNotFoundError(f"No .parquet files found in s3://{bucket}/{prefix}")
+    
+    logger.info(f"[SIMILARITY] Found {len(parquet_files)} parquet files")
+    
+    # Read all parquet files and concatenate
+    dfs = []
+    for i, key in enumerate(parquet_files):
+        try:
+            logger.debug(f"[SIMILARITY] Reading file {i+1}/{len(parquet_files)}: {key}")
+            response = s3_client.get_object(Bucket=bucket, Key=key)
+            parquet_data = response["Body"].read()
+            table = pq.read_table(BytesIO(parquet_data))
+            df_temp = table.to_pandas()
+            dfs.append(df_temp)
+        except Exception as e:
+            logger.warning(f"[SIMILARITY] Failed to read {key}: {e}")
+            continue
+    
+    if not dfs:
+        raise ValueError(f"Failed to read any parquet files from s3://{bucket}/{prefix}")
+    
+    # Concatenate all dataframes
+    df_combined = pd.concat(dfs, ignore_index=True)
+    logger.info(f"[SIMILARITY] Combined {len(dfs)} files into {len(df_combined)} records")
+    
+    return df_combined
 
 
 # =========================
@@ -179,24 +259,29 @@ def load_reference_data_from_s3(
     """
     Load reference transaction data from S3 and extract feature vectors.
     
+    Supports both CSV files and Parquet directories:
+    - If key ends with .csv: reads single CSV file
+    - If key is a directory (ends with /): reads all .parquet files in directory
+    - If key ends with .parquet: reads single parquet file
+    
     Args:
         bucket: S3 bucket name (overrides default)
-        key: S3 object key (overrides default)
-        s3_uri: Full S3 URI like 's3://bucket/path/file.csv' (takes precedence)
+        key: S3 object key or prefix (overrides default)
+        s3_uri: Full S3 URI like 's3://bucket/path/' (takes precedence)
         force_reload: If True, bypass cache and reload from S3
     
     Returns:
         Tuple of (dataframe, feature_vectors, status_labels, transaction_ids)
     
     Examples:
-        # Use defaults
+        # Use defaults (parquet directory)
         load_reference_data_from_s3()
         
         # Specify bucket and key
-        load_reference_data_from_s3(bucket="my-bucket", key="data/file.csv")
+        load_reference_data_from_s3(bucket="my-bucket", key="data/parquet/")
         
         # Use S3 URI
-        load_reference_data_from_s3(s3_uri="s3://my-bucket/data/file.csv")
+        load_reference_data_from_s3(s3_uri="s3://my-bucket/data/parquet/")
     """
     global _REFERENCE_CACHE
     
@@ -222,13 +307,29 @@ def load_reference_data_from_s3(
         return _REFERENCE_CACHE[cache_key]
     
     try:
-        logger.info(f"[SIMILARITY] Loading reference data from s3://{bucket}/{key}")
-        
         s3_client = boto3.client("s3")
-        response = s3_client.get_object(Bucket=bucket, Key=key)
-        csv_content = response["Body"].read().decode("utf-8")
         
-        df = pd.read_csv(StringIO(csv_content))
+        # Determine if we're reading CSV, single parquet, or parquet directory
+        if key.endswith('.csv'):
+            # CSV file
+            logger.info(f"[SIMILARITY] Loading CSV from s3://{bucket}/{key}")
+            df = _load_csv_from_s3(s3_client, bucket, key)
+            
+        elif key.endswith('.parquet'):
+            # Single parquet file
+            logger.info(f"[SIMILARITY] Loading single parquet from s3://{bucket}/{key}")
+            df = _load_parquet_from_s3(s3_client, bucket, key)
+            
+        elif key.endswith('/'):
+            # Parquet directory - read all parquet files
+            logger.info(f"[SIMILARITY] Loading parquet directory from s3://{bucket}/{key}")
+            df = _load_parquet_directory_from_s3(s3_client, bucket, key)
+            
+        else:
+            # Try to detect format
+            logger.warning(f"[SIMILARITY] Ambiguous key format: {key}. Trying parquet directory...")
+            df = _load_parquet_directory_from_s3(s3_client, bucket, key)
+        
         logger.info(f"[SIMILARITY] Loaded {len(df)} reference transactions")
         
         # Validate required columns
