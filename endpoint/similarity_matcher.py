@@ -496,11 +496,14 @@ def load_reference_data_from_s3(
             logger.info(f"[SIMILARITY] Skip reasons: {skip_reasons}")
         
         if len(vectors) == 0:
-            raise ValueError(
-                f"No valid feature vectors extracted from reference data. "
+            logger.warning(
+                f"[SIMILARITY] No valid feature vectors extracted from reference data. "
                 f"Total rows: {total_rows}, all records were skipped. "
-                f"Reasons: {skip_reasons}"
+                f"Reasons: {skip_reasons}. "
+                f"Similarity matching will be DISABLED."
             )
+            # Return empty data to signal no similarity matching available
+            return None, None, None, None
         
         # Convert to numpy arrays
         reference_vectors = np.array(vectors)
@@ -537,8 +540,12 @@ def load_reference_data_from_s3(
         return ref_df, reference_vectors, labels_array, ids_array
     
     except Exception as e:
-        logger.error(f"[SIMILARITY] Error loading reference data: {e}")
-        raise
+        logger.error(
+            f"[SIMILARITY] Error loading reference data from {bucket}/{key}: {e}. "
+            f"Similarity matching will be DISABLED. Endpoint will continue processing with K-means only."
+        )
+        # Return None to signal graceful degradation
+        return None, None, None, None
 
 
 def _extract_feature_vector(decision_result: Dict[str, Any]) -> Optional[np.ndarray]:
@@ -696,6 +703,17 @@ def find_similar_transaction(
                 s3_uri=s3_uri,
                 force_reload=force_reload
             )
+            
+            # Check if data loading failed (returns None values)
+            if ref_vectors is None or ref_labels is None:
+                logger.warning("[SIMILARITY] No reference data available - similarity matching disabled")
+                return {
+                    "matched": False,
+                    "similarity_score": 0.0,
+                    "status_warning": "NONE",
+                    "top_matches": [],
+                    "error": "No reference data available"
+                }
             
             # Determine source URI for logging
             if s3_uri:
