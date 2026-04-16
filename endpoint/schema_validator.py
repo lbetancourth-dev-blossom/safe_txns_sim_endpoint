@@ -238,25 +238,52 @@ def validate_s3_reference_data(
 def get_schema_info() -> Dict:
     """Get information about the expected schema."""
     return {
-        "num_features": {
-            "count": len(EXPECTED_NUM_FEATURES),
-            "fields": EXPECTED_NUM_FEATURES
-        },
-        "cat_features": {
-            "count": len(EXPECTED_CAT_FEATURES),
-            "fields": EXPECTED_CAT_FEATURES
-        },
-        "post_fields": {
-            "count": len(EXPECTED_POST_FIELDS),
-            "fields": EXPECTED_POST_FIELDS
-        },
-        "optional_fields": {
-            "count": len(OPTIONAL_FIELDS),
-            "fields": OPTIONAL_FIELDS
-        },
-        "total_expected_fields": len(EXPECTED_SCHEMA),
-        "core_fields_for_similarity": CORE_FIELDS_FOR_SIMILARITY
+        "numerical_features": EXPECTED_NUM_FEATURES,
+        "categorical_features": EXPECTED_CAT_FEATURES,
+        "num_features_count": len(EXPECTED_NUM_FEATURES),
+        "cat_features_count": len(EXPECTED_CAT_FEATURES),
+        "total_features": len(EXPECTED_NUM_FEATURES) + len(EXPECTED_CAT_FEATURES),
     }
+
+
+def validate_features_only(decision_result: Dict, require_all: bool = True) -> bool:
+    """
+    Quick validation that checks only for presence of num__ and cat__ features.
+    
+    Used for similarity matching where post-processing fields are not required.
+    
+    Args:
+        decision_result: Dictionary to validate
+        require_all: If True, requires ALL expected features. If False, accepts partial matches.
+    
+    Returns:
+        True if all (or sufficient) num__ and cat__ features are present, False otherwise
+    """
+    if not decision_result:
+        return False
+    
+    if require_all:
+        # Check all numerical features
+        for feat in EXPECTED_NUM_FEATURES:
+            if feat not in decision_result:
+                return False
+        
+        # Check all categorical features  
+        for feat in EXPECTED_CAT_FEATURES:
+            if feat not in decision_result:
+                return False
+        
+        return True
+    else:
+        # Flexible mode: accept if at least 50% of expected features are present
+        present_num = sum(1 for feat in EXPECTED_NUM_FEATURES if feat in decision_result)
+        present_cat = sum(1 for feat in EXPECTED_CAT_FEATURES if feat in decision_result)
+        
+        num_coverage = present_num / len(EXPECTED_NUM_FEATURES) if len(EXPECTED_NUM_FEATURES) > 0 else 0
+        cat_coverage = present_cat / len(EXPECTED_CAT_FEATURES) if len(EXPECTED_CAT_FEATURES) > 0 else 0
+        
+        # Require at least 50% coverage of both num and cat features
+        return num_coverage >= 0.5 and cat_coverage >= 0.5
 
 
 def check_schema_compatibility(

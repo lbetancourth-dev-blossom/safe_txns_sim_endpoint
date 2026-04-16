@@ -36,17 +36,21 @@ logger.setLevel(logging.INFO)
 # Try to import schema validator
 try:
     from schema_validator import (
-        EXPECTED_SCHEMA,
-        CORE_FIELDS_FOR_SIMILARITY,
+        EXPECTED_NUM_FEATURES,
+        EXPECTED_CAT_FEATURES,
         validate_decision_result_schema,
-        validate_s3_reference_data
+        validate_features_only,
+        validate_s3_reference_data,
+        get_schema_info
     )
     HAS_SCHEMA_VALIDATOR = True
-except ImportError:
-    logger.warning("[SIMILARITY] schema_validator not found, skipping strict validation")
+    logger.info("[SIMILARITY] Schema validator loaded successfully")
+except ImportError as e:
+    logger.warning(f"[SIMILARITY] schema_validator not found: {e}")
     HAS_SCHEMA_VALIDATOR = False
-    EXPECTED_SCHEMA = []
-    CORE_FIELDS_FOR_SIMILARITY = ["Cluster", "Distance_to_Centroid", "risk_score", "is_outlier"]
+    EXPECTED_NUM_FEATURES = []
+    EXPECTED_CAT_FEATURES = []
+    validate_features_only = None
 
 # =========================
 # Configuration
@@ -56,13 +60,115 @@ DEFAULT_THRESHOLD = 0.90
 DEFAULT_S3_BUCKET = "blossom-analytics-safe-dev-nv"
 DEFAULT_S3_KEY = "safe_txns/data/similarity/SafeTransactionResults.csv"
 
-# Global cache for reference data (keyed by s3_uri)
-_REFERENCE_CACHE = {}  # {s3_uri: (df, vectors, labels, ids)}
+# Global cache for reference data (keyed by s3_uri or local path)
+_REFERENCE_CACHE = {}  # {s3_uri or file_path: (df, vectors, labels, ids)}
 
 
 # =========================
 # Data Loading
 # =========================
+
+def _load_from_local_csv(csv_path: str) -> Tuple[pd.DataFrame, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Load reference data from local CSV file (for testing).
+    
+    Args:
+        csv_path: Path to local CSV file
+    
+    Returns:
+        Tuple of (DataFrame, feature_vectors, labels, transaction_ids)
+    """
+    global _REFERENCE_CACHE
+    
+    # Check cache
+    if csv_path in _REFERENCE_CACHE:
+        logger.info(f"[SIMILARITY] Using cached data from {csv_path}")
+        return _REFERENCE_CACHE[csv_path]
+    
+    logger.info(f"[SIMILARITY] Loading reference data from local file: {csv_path}")
+    
+    # Load CSV
+    df = pd.read_csv(csv_path)
+    logger.info(f"[SIMILARITY] Loaded {len(df)} records from local file")
+    
+    # Process same as S3 version
+    feature_vectors = []
+    labels = []
+    transaction_ids = []
+    
+    skip_reasons = {
+        "parse_error": 0,
+        "missing_metadata": 0,
+        "missing_decisionResult": 0,
+        "schema_invalid": 0,
+        "feature_extraction_failed": 0
+    }
+    
+    for idx, row in df.iterrows():
+        # Extract metadata
+        metadata_str = row.get("metadata", "{}")
+        if pd.isna(metadata_str):
+            skip_reasons["missing_metadata"] += 1
+            continue
+        
+        try:
+            metadata = json.loads(metadata_str) if isinstance(metadata_str, str) else metadata_str
+        except (json.JSONDecodeError, TypeError) as e:
+            skip_reasons["parse_error"] += 1
+            continue
+        
+        # Extract decisionResult
+        decision_result = metadata.get("decisionResult")
+        if not decision_result:
+            skip_reasons["missing_decisionResult"] += 1
+            continue
+        
+        # Validate schema - ONLY check num__ and cat__ features
+        # Use flexible validation to allow partial schema matches
+        if HAS_SCHEMA_VALIDATOR:
+            is_valid = validate_features_only(decision_result, require_all=False)
+            if not is_valid:
+                skip_reasons["schema_invalid"] += 1
+                continue
+        
+        # Extract feature vector
+        feature_vector = _extract_feature_vector(decision_result)
+        if feature_vector is None:
+            skip_reasons["feature_extraction_failed"] += 1
+            continue
+        
+        # Extract label and transaction ID
+        label = row.get("statusWarning", "NONE")
+        txn_id = row.get("TransactionID") or row.get("transactionId") or row.get("transaction_id") or row.get("id") or f"txn_{idx}"
+        
+        feature_vectors.append(feature_vector)
+        labels.append(label)
+        transaction_ids.append(txn_id)
+    
+    # Log skip statistics
+    total_skipped = sum(skip_reasons.values())
+    if total_skipped > 0:
+        logger.warning(f"[SIMILARITY] Skipped {total_skipped}/{len(df)} records:")
+        for reason, count in skip_reasons.items():
+            if count > 0:
+                logger.warning(f"[SIMILARITY]   - {reason}: {count}")
+    
+    if len(feature_vectors) == 0:
+        raise ValueError("No valid reference data found in local CSV")
+    
+    # Convert to numpy arrays
+    feature_matrix = np.array(feature_vectors)
+    label_array = np.array(labels)
+    id_array = np.array(transaction_ids)
+    
+    logger.info(f"[SIMILARITY] Successfully loaded {len(feature_vectors)} valid records")
+    logger.info(f"[SIMILARITY] Feature vector shape: {feature_matrix.shape}")
+    
+    # Cache the result
+    _REFERENCE_CACHE[csv_path] = (df, feature_matrix, label_array, id_array)
+    
+    return df, feature_matrix, label_array, id_array
+
 
 def load_reference_data_from_s3(
     bucket: Optional[str] = None,
@@ -176,25 +282,22 @@ def load_reference_data_from_s3(
                 
                 decision_result = metadata_dict.get("decisionResult", {})
                 
-                # Validate schema if validator is available
+                # Validate schema - ONLY check num__ and cat__ features
+                # Use flexible validation to allow partial schema matches
                 if HAS_SCHEMA_VALIDATOR:
-                    is_valid, missing, extra = validate_decision_result_schema(
-                        decision_result,
-                        strict=False,
-                        require_all=False
-                    )
+                    is_valid = validate_features_only(decision_result, require_all=False)
                     
                     if not is_valid:
                         skip_reasons["schema_invalid"] += 1
                         skipped_count += 1
                         logger.debug(
                             f"[SIMILARITY] Skipping row {idx}: invalid schema - "
-                            f"missing core fields: {missing}"
+                            f"insufficient num__ or cat__ features coverage"
                         )
                         continue
                 
                 # Convert to feature vector
-                feature_vector = _extract_feature_vector(decision_result, validate_schema=False)
+                feature_vector = _extract_feature_vector(decision_result)
                 
                 if feature_vector is None or len(feature_vector) == 0:
                     skip_reasons["feature_extraction_failed"] += 1
@@ -213,7 +316,7 @@ def load_reference_data_from_s3(
             except Exception as e:
                 skip_reasons["parse_error"] += 1
                 skipped_count += 1
-                logger.debug(f"[SIMILARITY] Skipping row {idx}: unexpected error - {e}")
+                logger.warning(f"[SIMILARITY] Skipping row {idx}: unexpected error - {type(e).__name__}: {e}")
                 continue
         
         # Log filtering summary
@@ -259,79 +362,60 @@ def load_reference_data_from_s3(
         raise
 
 
-def _extract_feature_vector(
-    decision_result: Dict[str, Any],
-    validate_schema: bool = True
-) -> Optional[np.ndarray]:
+def _extract_feature_vector(decision_result: Dict[str, Any]) -> Optional[np.ndarray]:
     """
-    Extract a numerical feature vector from decisionResult JSON.
+    Extract feature vector from decisionResult for similarity comparison.
     
-    The decisionResult must contain fields matching the schema from inference_rules.py:
-    - Cluster, Distance_to_Centroid, risk_score, is_outlier
-    - num__* features (numerical features) - 31 features
-    - cat__* features (categorical features) - 18 features
+    ONLY extracts num__ and cat__ features (NOT post-processing fields like Cluster, risk_score, etc.)
     
     Args:
-        decision_result: Dictionary from metadata.decisionResult
-        validate_schema: If True, validates schema before extraction
+        decision_result: Dictionary with num__, cat__ features
     
     Returns:
-        Numpy array of features, or None if extraction fails
+        Numpy array with feature values in sorted order, or None if extraction fails
     """
     try:
-        # Validate schema if validator is available
-        if validate_schema and HAS_SCHEMA_VALIDATOR:
-            is_valid, missing, extra = validate_decision_result_schema(
-                decision_result,
-                strict=False,
-                require_all=False
-            )
-            
+        # Validate schema first (only num__ and cat__ fields required)
+        # Use flexible validation for partial schema matches
+        if HAS_SCHEMA_VALIDATOR and validate_features_only is not None:
+            is_valid = validate_features_only(decision_result, require_all=False)
             if not is_valid:
-                logger.warning(
-                    f"[SIMILARITY] Schema validation failed. Missing core fields: {missing}"
-                )
-                # Continue anyway but log warning
+                logger.warning("[SIMILARITY] Feature validation failed - insufficient feature coverage")
+                # Continue anyway - we'll extract whatever features are available
         
-        features = []
+        # Get schema info
+        schema_info = get_schema_info()
+        num_features = schema_info["numerical_features"]
+        cat_features = schema_info["categorical_features"]
         
-        # Extract key numerical fields in consistent order
-        key_fields = CORE_FIELDS_FOR_SIMILARITY
+        # Extract values - ONLY num__ and cat__ fields
+        feature_values = []
         
-        for field in key_fields:
-            val = decision_result.get(field, 0)
-            try:
-                features.append(float(val))
-            except (ValueError, TypeError):
-                features.append(0.0)
+        # Add numerical features in sorted order
+        for feat in sorted(num_features):
+            val = decision_result.get(feat, 0.0)
+            feature_values.append(float(val) if val is not None else 0.0)
         
-        # Extract num__* features (numerical) in sorted order for consistency
-        num_features = sorted([k for k in decision_result.keys() if k.startswith("num__")])
-        for field in num_features:
-            val = decision_result.get(field, 0)
-            try:
-                features.append(float(val))
-            except (ValueError, TypeError):
-                features.append(0.0)
+        # Add categorical features in sorted order
+        for feat in sorted(cat_features):
+            val = decision_result.get(feat, 0.0)
+            feature_values.append(float(val) if val is not None else 0.0)
         
-        # Extract cat__* features (categorical/binary) in sorted order
-        cat_features = sorted([k for k in decision_result.keys() if k.startswith("cat__")])
-        for field in cat_features:
-            val = decision_result.get(field, 0)
-            try:
-                features.append(float(val))
-            except (ValueError, TypeError):
-                features.append(0.0)
+        # NOTE: We do NOT include post-processing fields (Cluster, Distance_to_Centroid, 
+        # risk_score, risk_decision, is_outlier) in the feature vector for similarity matching
         
-        if len(features) == 0:
-            logger.error("[SIMILARITY] No features extracted from decision_result")
+        if len(feature_values) == 0:
+            logger.error("[SIMILARITY] No features extracted")
             return None
         
-        logger.debug(f"[SIMILARITY] Extracted {len(features)} features from decision_result")
-        return np.array(features)
+        logger.debug(f"[SIMILARITY] Extracted {len(feature_values)} features ({len(num_features)} num + {len(cat_features)} cat)")
+        
+        return np.array(feature_values, dtype=np.float64)
     
     except Exception as e:
-        logger.error(f"[SIMILARITY] Feature extraction failed: {e}")
+        logger.error(f"[SIMILARITY] Error extracting feature vector: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
@@ -393,6 +477,7 @@ def find_similar_transaction(
     s3_bucket: Optional[str] = None,
     s3_key: Optional[str] = None,
     s3_uri: Optional[str] = None,
+    local_csv_path: Optional[str] = None,
     force_reload: bool = False
 ) -> Dict[str, Any]:
     """
@@ -406,6 +491,7 @@ def find_similar_transaction(
         s3_bucket: S3 bucket name (optional, overrides default)
         s3_key: S3 key path (optional, overrides default)
         s3_uri: Full S3 URI (optional, takes precedence over bucket/key)
+        local_csv_path: Path to local CSV file for testing (bypasses S3)
         force_reload: Force reload reference data from S3
     
     Returns:
@@ -418,20 +504,27 @@ def find_similar_transaction(
     """
     try:
         # Load reference data
-        ref_df, ref_vectors, ref_labels, ref_ids = load_reference_data_from_s3(
-            bucket=s3_bucket,
-            key=s3_key,
-            s3_uri=s3_uri,
-            force_reload=force_reload
-        )
-        
-        # Determine source URI for logging
-        if s3_uri:
-            source_uri = s3_uri
+        if local_csv_path:
+            # Load from local file for testing
+            logger.info(f"[SIMILARITY] Loading reference data from local file: {local_csv_path}")
+            ref_df, ref_vectors, ref_labels, ref_ids = _load_from_local_csv(local_csv_path)
+            source_uri = f"file://{local_csv_path}"
         else:
-            bucket = s3_bucket or os.getenv("SIMILARITY_S3_BUCKET", DEFAULT_S3_BUCKET)
-            key = s3_key or os.getenv("SIMILARITY_S3_KEY", DEFAULT_S3_KEY)
-            source_uri = f"s3://{bucket}/{key}"
+            # Load from S3
+            ref_df, ref_vectors, ref_labels, ref_ids = load_reference_data_from_s3(
+                bucket=s3_bucket,
+                key=s3_key,
+                s3_uri=s3_uri,
+                force_reload=force_reload
+            )
+            
+            # Determine source URI for logging
+            if s3_uri:
+                source_uri = s3_uri
+            else:
+                bucket_name = s3_bucket or os.getenv("SIMILARITY_S3_BUCKET", DEFAULT_S3_BUCKET)
+                key_name = s3_key or os.getenv("SIMILARITY_S3_KEY", DEFAULT_S3_KEY)
+                source_uri = f"s3://{bucket_name}/{key_name}"
         
         # Extract query feature vector
         query_vector = _extract_feature_vector(query_result)
