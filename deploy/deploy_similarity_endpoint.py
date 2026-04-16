@@ -108,7 +108,7 @@ model_response = sm.create_model(
             # Similarity configuration
             'SIMILARITY_THRESHOLD': '0.90',
             'SIMILARITY_S3_BUCKET': BUCKET,
-            'SIMILARITY_S3_KEY': 'safe_txns/data/similarity/SafeTransactionResults.csv',
+            'SIMILARITY_S3_KEY': 'safe_txns/similarity/data/SafeTransactionResults/',  # Parquet directory
         }
     },
     ExecutionRoleArn=ROLE_ARN
@@ -199,7 +199,7 @@ print(f"S3 Model: {model_s3_uri}")
 print("\nEnvironment Variables:")
 print(f"  SIMILARITY_THRESHOLD=0.90")
 print(f"  SIMILARITY_S3_BUCKET={BUCKET}")
-print(f"  SIMILARITY_S3_KEY=safe_txns/data/similarity/SafeTransactionResults.csv")
+print(f"  SIMILARITY_S3_KEY=safe_txns/similarity/data/SafeTransactionResults/")
 print("\nTest with:")
 print(f"  aws sagemaker-runtime invoke-endpoint --endpoint-name {ENDPOINT_NAME} \\")
 print(f"    --content-type text/csv --body file://test_data.csv output.json")

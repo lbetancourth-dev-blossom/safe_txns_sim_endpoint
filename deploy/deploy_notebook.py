@@ -28,7 +28,7 @@ sklearn_model = SKLearnModel(
     env={
         "SIMILARITY_THRESHOLD": "0.90",
         "SIMILARITY_S3_BUCKET": "blossom-analytics-safe-dev-nv",
-        "SIMILARITY_S3_KEY": "safe_txns/data/similarity/SafeTransactionResults.csv",
+        "SIMILARITY_S3_KEY": "safe_txns/similarity/data/SafeTransactionResults/",  # Parquet directory
     }
 )
 
