@@ -1043,7 +1043,7 @@ def predict_fn(input_data, model_artifacts):
     similarity_results = []
     similarity_threshold = float(os.getenv("SIMILARITY_THRESHOLD", "0.90"))
     s3_bucket = os.getenv("SIMILARITY_S3_BUCKET", "blossom-analytics-safe-dev-nv")
-    s3_key = os.getenv("SIMILARITY_S3_KEY", "safe_txns/data/similarity/SafeTransactionResults.csv")
+    s3_key = os.getenv("SIMILARITY_S3_KEY", "safe_txns/similarity/data/SafeTransactionResults.csv")
     
     if _ensure_similarity_loaded():
         print(f"[SIMILARITY] Checking similarity for {len(out_df)} transactions (threshold: {similarity_threshold})")
