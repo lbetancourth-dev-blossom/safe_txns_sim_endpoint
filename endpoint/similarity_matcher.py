@@ -33,6 +33,21 @@ import logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+# Try to import schema validator
+try:
+    from schema_validator import (
+        EXPECTED_SCHEMA,
+        CORE_FIELDS_FOR_SIMILARITY,
+        validate_decision_result_schema,
+        validate_s3_reference_data
+    )
+    HAS_SCHEMA_VALIDATOR = True
+except ImportError:
+    logger.warning("[SIMILARITY] schema_validator not found, skipping strict validation")
+    HAS_SCHEMA_VALIDATOR = False
+    EXPECTED_SCHEMA = []
+    CORE_FIELDS_FOR_SIMILARITY = ["Cluster", "Distance_to_Centroid", "risk_score", "is_outlier"]
+
 # =========================
 # Configuration
 # =========================
@@ -154,7 +169,35 @@ def load_reference_data_from_s3(
         
         # Convert to numpy array
         reference_vectors = np.array(vectors)
-        logger.info(f"[SIMILARITY] Extracted {len(reference_vectors)} valid feature vectors, shape: {reference_vectors.shape}")
+        logger.info(
+            f"[SIMILARITY] Extracted {len(reference_vectors)} valid feature vectors, "
+            f"shape: {reference_vectors.shape}"
+        )
+        
+        # Validate reference data schema if validator is available
+        if HAS_SCHEMA_VALIDATOR:
+            logger.info("[SIMILARITY] Validating reference data schema...")
+            is_valid, validation_report = validate_s3_reference_data(
+                df.to_dict(orient="records"),
+                min_coverage=0.8  # At least 80% of records must have valid schema
+            )
+            
+            if is_valid:
+                logger.info(
+                    f"[SIMILARITY] Schema validation passed: "
+                    f"{validation_report['valid_records']}/{validation_report['total_records']} "
+                    f"records valid ({validation_report['coverage_rate']:.1%})"
+                )
+            else:
+                logger.warning(
+                    f"[SIMILARITY] Schema validation warning: "
+                    f"Only {validation_report['coverage_rate']:.1%} records have valid schema "
+                    f"(minimum required: {validation_report['min_coverage_required']:.1%})"
+                )
+                if validation_report.get('schema_issues'):
+                    logger.warning(
+                        f"[SIMILARITY] First issues: {validation_report['schema_issues'][:3]}"
+                    )
         
         # Store in cache
         ref_df = df.iloc[valid_indices].reset_index(drop=True)
@@ -169,31 +212,44 @@ def load_reference_data_from_s3(
         raise
 
 
-def _extract_feature_vector(decision_result: Dict[str, Any]) -> Optional[np.ndarray]:
+def _extract_feature_vector(
+    decision_result: Dict[str, Any],
+    validate_schema: bool = True
+) -> Optional[np.ndarray]:
     """
     Extract a numerical feature vector from decisionResult JSON.
     
-    The decisionResult typically contains fields like:
+    The decisionResult must contain fields matching the schema from inference_rules.py:
     - Cluster, Distance_to_Centroid, risk_score, is_outlier
-    - num__* features (numerical features)
-    - cat__* features (categorical features)
+    - num__* features (numerical features) - 31 features
+    - cat__* features (categorical features) - 18 features
     
     Args:
         decision_result: Dictionary from metadata.decisionResult
+        validate_schema: If True, validates schema before extraction
     
     Returns:
         Numpy array of features, or None if extraction fails
     """
     try:
+        # Validate schema if validator is available
+        if validate_schema and HAS_SCHEMA_VALIDATOR:
+            is_valid, missing, extra = validate_decision_result_schema(
+                decision_result,
+                strict=False,
+                require_all=False
+            )
+            
+            if not is_valid:
+                logger.warning(
+                    f"[SIMILARITY] Schema validation failed. Missing core fields: {missing}"
+                )
+                # Continue anyway but log warning
+        
         features = []
         
         # Extract key numerical fields in consistent order
-        key_fields = [
-            "Cluster",
-            "Distance_to_Centroid",
-            "risk_score",
-            "is_outlier",
-        ]
+        key_fields = CORE_FIELDS_FOR_SIMILARITY
         
         for field in key_fields:
             val = decision_result.get(field, 0)
@@ -202,7 +258,7 @@ def _extract_feature_vector(decision_result: Dict[str, Any]) -> Optional[np.ndar
             except (ValueError, TypeError):
                 features.append(0.0)
         
-        # Extract num__* features (numerical)
+        # Extract num__* features (numerical) in sorted order for consistency
         num_features = sorted([k for k in decision_result.keys() if k.startswith("num__")])
         for field in num_features:
             val = decision_result.get(field, 0)
@@ -211,7 +267,7 @@ def _extract_feature_vector(decision_result: Dict[str, Any]) -> Optional[np.ndar
             except (ValueError, TypeError):
                 features.append(0.0)
         
-        # Extract cat__* features (categorical/binary)
+        # Extract cat__* features (categorical/binary) in sorted order
         cat_features = sorted([k for k in decision_result.keys() if k.startswith("cat__")])
         for field in cat_features:
             val = decision_result.get(field, 0)
@@ -221,12 +277,14 @@ def _extract_feature_vector(decision_result: Dict[str, Any]) -> Optional[np.ndar
                 features.append(0.0)
         
         if len(features) == 0:
+            logger.error("[SIMILARITY] No features extracted from decision_result")
             return None
         
+        logger.debug(f"[SIMILARITY] Extracted {len(features)} features from decision_result")
         return np.array(features)
     
     except Exception as e:
-        logger.warning(f"[SIMILARITY] Feature extraction failed: {e}")
+        logger.error(f"[SIMILARITY] Feature extraction failed: {e}")
         return None
 
 
