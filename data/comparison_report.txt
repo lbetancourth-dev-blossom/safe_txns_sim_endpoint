@@ -1,0 +1,40 @@
+================================================================================
+PARQUET TO CSV CONVERSION & COMPARISON REPORT
+Generated: 2026-04-24 14:19:37
+================================================================================
+
+1. FILES CONVERTED:
+   ✓ data/bronze.parquet → data/bronze.csv
+   ✓ data/silver.parquet → data/silver.csv
+
+2. DATASET SIZES:
+   - Bronze:               55 rows, 12 columns
+   - Silver:               55 rows, 7 columns
+   - SafeTransactionResults: 189 rows, 7 columns
+
+3. KEY FINDINGS:
+   ✗ NO UUID OVERLAP between datasets
+     - Bronze/Silver share all 55 UUIDs (identical)
+     - SafeTransactionResults has completely different 189 UUIDs
+     - These appear to be different test datasets
+
+4. SCHEMA COMPARISON:
+   Common fields (normalized): uuid, transactionid, idfi, statuswarning, metadata, createdat, updatedat
+   
+   Bronze-only fields: _dms_operation, _dms_timestamp, _ingested_at, _run_id, _load_type
+   (These are ETL metadata fields)
+
+5. STATUS DISTRIBUTION:
+   Bronze/Silver:
+     - PENDING: 53 (96.4%)
+     - WHITELISTED: 2 (3.6%)
+   
+   SafeTransactionResults:
+     - SAFE: 118 (62.4%)
+     - RISKY: 71 (37.6%)
+
+6. CONCLUSION:
+   - Bronze and Silver are identical except for ETL metadata columns
+   - SafeTransactionResults contains completely different transactions
+   - Direct comparison by UUID is not possible
+   - The datasets represent different test scenarios or time periods

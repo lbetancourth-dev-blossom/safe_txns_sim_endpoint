@@ -2,16 +2,20 @@
 
 ## Descripción General
 
-Este proyecto implementa un **endpoint de predicción en Amazon SageMaker** para detección de fraude en transacciones financieras. El sistema combina un modelo de clustering K-Means, matching de similitud con transacciones históricas y reglas estadísticas para evaluar el riesgo de cada transacción en tiempo real o por lotes.
+Este proyecto implementa un **endpoint de predicción en Amazon SageMaker** para detección de fraude en transacciones financieras. El sistema combina un modelo de clustering K-Means, matching de similitud con transacciones históricas etiquetadas y reglas estadísticas para evaluar el riesgo de cada transacción en tiempo real o por lotes.
 
 ### Características Principales
 
 - **Modelo de ML**: K-Means clustering para detectar patrones anómalos en transacciones
-- **Similarity Matching**: Comparación con transacciones históricas para detectar patrones conocidos
+- **Similarity Matching**: Comparación con transacciones históricas etiquetadas (SAFE/RISKY) almacenadas en S3
+- **Datos en Parquet**: Soporte para múltiples archivos Parquet con recarga automática
+- **Graceful Degradation**: El endpoint continúa funcionando sin similarity si no hay datos disponibles
+- **Dynamic Reload**: Detección automática de nuevos datos sin reiniciar el endpoint
 - **Sistema de Reglas**: Reglas estadísticas (v8) para evaluación de riesgo basada en comportamiento histórico
 - **Política Híbrida**: Combinación de clustering + similitud + reglas para decisiones más robustas
 - **Scoring en Tiempo Real**: Capacidad de procesar transacciones individuales o en lote
 - **Decisiones Multinivel**: Accept, User Auth, Admin Review, Reject
+- **Alta Disponibilidad**: Manejo robusto de errores sin downtime del endpoint
 
 ---
 
