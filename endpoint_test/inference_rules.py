@@ -1161,6 +1161,11 @@ def predict_fn(input_data, model_artifacts):
                 df_transformed[c] = 0.0
 
     final_df = pd.DataFrame(index=out_df.index)
+    
+    # Add TransactionID first (from input)
+    if "TransactionID" in input_data.columns:
+        final_df["TransactionID"] = input_data["TransactionID"].values
+    
     for c in requested_cols:
         if c.startswith("num__") or c.startswith("cat__"):
             final_df[c] = df_transformed[c]
@@ -1181,8 +1186,11 @@ def predict_fn(input_data, model_artifacts):
         final_df["sim_score"] = [sr.get("sim_score", 0.0) for sr in similarity_results]
         final_df["sim_decision"] = [sr.get("sim_decision", None) for sr in similarity_results]
 
-    # Reorden final exacto
-    output_cols = requested_cols.copy()
+    # Reorden final exacto - TransactionID primero
+    output_cols = []
+    if "TransactionID" in final_df.columns:
+        output_cols.append("TransactionID")
+    output_cols.extend(requested_cols)
     if similarity_results:
         output_cols.extend(["sim_match_txn_id", "sim_score", "sim_decision"])
     
