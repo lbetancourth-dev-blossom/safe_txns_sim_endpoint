@@ -1085,23 +1085,28 @@ def predict_fn(input_data, model_artifacts):
                 matched_txn_id = result.get("matched_transaction_id", None)
                 top_matches = result.get("top_matches", [])
                 
+                # Calculate sim_decision based on score and status
+                sim_decision = None
+                if similarity_score >= 0.90 and status_warning in ["SAFE", "RISKY"]:
+                    sim_decision = "Accept" if status_warning == "SAFE" else "Reject"
+                
                 # Log match if found
                 if matched:
-                    print(f"[SIMILARITY] Row {idx}: Match found (score: {similarity_score:.4f}, matched_id: {matched_txn_id})")
+                    print(f"[SIMILARITY] Row {idx}: Match found (score: {similarity_score:.4f}, matched_id: {matched_txn_id}, decision: {sim_decision})")
                 
-                # Store only 3 fields: TransactionID, matched_transaction_id, similarity_score
+                # Store similarity fields with new names
                 similarity_result = {
-                    "TransactionID": transaction_ids[idx] if idx < len(transaction_ids) else None,
-                    "matched_transaction_id": matched_txn_id,
-                    "similarity_score": float(similarity_score) if similarity_score is not None else 0.0
+                    "sim_match_txn_id": matched_txn_id,
+                    "sim_score": float(similarity_score) if similarity_score is not None else 0.0,
+                    "sim_decision": sim_decision
                 }
                 
             except Exception as e:
                 print(f"[SIMILARITY] Error processing row {idx}: {repr(e)}")
                 similarity_result = {
-                    "TransactionID": transaction_ids[idx] if idx < len(transaction_ids) else None,
-                    "matched_transaction_id": None,
-                    "similarity_score": 0.0
+                    "sim_match_txn_id": None,
+                    "sim_score": 0.0,
+                    "sim_decision": None
                 }
             
             similarity_results.append(similarity_result)
@@ -1110,9 +1115,9 @@ def predict_fn(input_data, model_artifacts):
         # Add empty similarity results
         for idx in range(len(out_df)):
             similarity_results.append({
-                "TransactionID": transaction_ids[idx] if idx < len(transaction_ids) else None,
-                "matched_transaction_id": None,
-                "similarity_score": 0.0
+                "sim_match_txn_id": None,
+                "sim_score": 0.0,
+                "sim_decision": None
             })
     
     # Similarity matching completed (results used internally for decision override)
@@ -1170,16 +1175,16 @@ def predict_fn(input_data, model_artifacts):
     final_df["audit_explanation"] = out_df["audit_explanation"]
     final_df["ux_copy"] = out_df["ux_copy"]
     
-    # Add similarity results to output (only 3 fields)
+    # Add similarity results to output (3 fields with new names)
     if similarity_results:
-        final_df["similarity_TransactionID"] = [sr.get("TransactionID", None) for sr in similarity_results]
-        final_df["similarity_matched_transaction_id"] = [sr.get("matched_transaction_id", None) for sr in similarity_results]
-        final_df["similarity_score"] = [sr.get("similarity_score", 0.0) for sr in similarity_results]
+        final_df["sim_match_txn_id"] = [sr.get("sim_match_txn_id", None) for sr in similarity_results]
+        final_df["sim_score"] = [sr.get("sim_score", 0.0) for sr in similarity_results]
+        final_df["sim_decision"] = [sr.get("sim_decision", None) for sr in similarity_results]
 
     # Reorden final exacto
     output_cols = requested_cols.copy()
     if similarity_results:
-        output_cols.extend(["similarity_TransactionID", "similarity_matched_transaction_id", "similarity_score"])
+        output_cols.extend(["sim_match_txn_id", "sim_score", "sim_decision"])
     
     final_df = final_df[output_cols]
 
