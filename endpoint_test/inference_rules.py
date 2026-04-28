@@ -1087,17 +1087,21 @@ def predict_fn(input_data, model_artifacts):
                 
                 # Calculate sim_decision based on score and status
                 sim_decision = None
-                if similarity_score >= 0.90 and status_warning in ["SAFE", "RISKY"]:
-                    sim_decision = "Accept" if status_warning == "SAFE" else "Reject"
+                sim_status = None
+                if matched and status_warning in ["SAFE", "RISKY"]:
+                    sim_status = status_warning  # Store the original status (SAFE/RISKY)
+                    if similarity_score >= 0.90:
+                        sim_decision = "Accept" if status_warning == "SAFE" else "Reject"
                 
                 # Log match if found
                 if matched:
-                    print(f"[SIMILARITY] Row {idx}: Match found (score: {similarity_score:.4f}, matched_id: {matched_txn_id}, decision: {sim_decision})")
+                    print(f"[SIMILARITY] Row {idx}: Match found (score: {similarity_score:.4f}, matched_id: {matched_txn_id}, status: {sim_status}, decision: {sim_decision})")
                 
                 # Store similarity fields with new names
                 similarity_result = {
                     "sim_match_txn_id": matched_txn_id,
                     "sim_score": float(similarity_score) if similarity_score is not None else None,
+                    "sim_status": sim_status,
                     "sim_decision": sim_decision
                 }
                 
@@ -1106,6 +1110,7 @@ def predict_fn(input_data, model_artifacts):
                 similarity_result = {
                     "sim_match_txn_id": None,
                     "sim_score": None,
+                    "sim_status": None,
                     "sim_decision": None
                 }
             
@@ -1116,7 +1121,8 @@ def predict_fn(input_data, model_artifacts):
         for idx in range(len(out_df)):
             similarity_results.append({
                 "sim_match_txn_id": None,
-                "sim_score": 0.0,
+                "sim_score": None,
+                "sim_status": None,
                 "sim_decision": None
             })
     
