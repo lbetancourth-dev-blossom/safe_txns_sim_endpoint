@@ -200,26 +200,43 @@ def process_and_save(df, output_file):
     
     print(f"[INFO] Processing {len(df)} records...")
     
-    # Check for createdAt column (case-insensitive)
-    created_at_col = None
-    for col in df.columns:
-        if col.lower() in ['createdat', 'created_at', 'creationdate', 'created']:
-            created_at_col = col
-            break
+    # Define expected column order
+    expected_columns = [
+        "uuid",
+        "transactionId", 
+        "idFi",
+        "statusWarning",
+        "metadata",
+        "createdAt",
+        "updatedAt"
+    ]
     
-    if created_at_col:
-        print(f"[INFO] Sorting by column: {created_at_col}")
+    # Validate required columns exist
+    missing_cols = [col for col in expected_columns if col not in df.columns]
+    if missing_cols:
+        print(f"[WARN] Missing expected columns: {missing_cols}")
+        print(f"[INFO] Available columns: {df.columns.tolist()}")
+    
+    # Reorder columns to match expected structure
+    existing_expected = [col for col in expected_columns if col in df.columns]
+    extra_cols = [col for col in df.columns if col not in expected_columns]
+    
+    # Final column order: expected columns first, then any extra
+    final_columns = existing_expected + extra_cols
+    df = df[final_columns]
+    
+    print(f"[INFO] Column order: {final_columns}")
+    
+    # Sort by createdAt if exists
+    if 'createdAt' in df.columns:
+        print(f"[INFO] Sorting by createdAt")
         
-        # Convert to datetime if not already
         try:
-            df[created_at_col] = pd.to_datetime(df[created_at_col])
-            df = df.sort_values(by=created_at_col)
-            print(f"[INFO] Date range: {df[created_at_col].min()} to {df[created_at_col].max()}")
+            df['createdAt'] = pd.to_datetime(df['createdAt'])
+            df = df.sort_values(by='createdAt')
+            print(f"[INFO] Date range: {df['createdAt'].min()} to {df['createdAt'].max()}")
         except Exception as e:
-            print(f"[WARN] Could not sort by {created_at_col}: {e}")
-    else:
-        print("[WARN] No 'createdAt' column found. Available columns:")
-        print(df.columns.tolist())
+            print(f"[WARN] Could not sort by createdAt: {e}")
     
     # Save to CSV
     output_path = Path(output_file)
