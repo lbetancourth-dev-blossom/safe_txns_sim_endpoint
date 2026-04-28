@@ -768,10 +768,11 @@ def find_similar_transaction(
         top_indices = np.argsort(similarities)[::-1][:top_k]
         top_scores = similarities[top_indices]
         
-        # Build top matches list (without TransactionID)
+        # Build top matches list with transaction_id
         top_matches = []
         for idx, score in zip(top_indices, top_scores):
             top_matches.append({
+                "transaction_id": ref_ids[idx],
                 "similarity_score": float(score),
                 "status_warning": ref_labels[idx]
             })
@@ -780,12 +781,14 @@ def find_similar_transaction(
         best_idx = top_indices[0]
         best_score = float(similarities[best_idx])
         best_label = ref_labels[best_idx]
+        best_txn_id = ref_ids[best_idx]
         
         # Check if above threshold
         matched = best_score >= threshold
         
         result = {
             "matched": matched,
+            "matched_transaction_id": best_txn_id if matched else None,
             "similarity_score": best_score,
             "status_warning": best_label if matched else "NONE",
             "top_matches": top_matches,
