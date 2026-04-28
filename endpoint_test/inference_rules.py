@@ -1097,7 +1097,7 @@ def predict_fn(input_data, model_artifacts):
                 # Store similarity fields with new names
                 similarity_result = {
                     "sim_match_txn_id": matched_txn_id,
-                    "sim_score": float(similarity_score) if similarity_score is not None else 0.0,
+                    "sim_score": float(similarity_score) if similarity_score is not None else None,
                     "sim_decision": sim_decision
                 }
                 
@@ -1105,7 +1105,7 @@ def predict_fn(input_data, model_artifacts):
                 print(f"[SIMILARITY] Error processing row {idx}: {repr(e)}")
                 similarity_result = {
                     "sim_match_txn_id": None,
-                    "sim_score": 0.0,
+                    "sim_score": None,
                     "sim_decision": None
                 }
             
