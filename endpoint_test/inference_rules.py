@@ -1186,10 +1186,11 @@ def predict_fn(input_data, model_artifacts):
     final_df["audit_explanation"] = out_df["audit_explanation"]
     final_df["ux_copy"] = out_df["ux_copy"]
     
-    # Add similarity results to output (3 fields with new names)
+    # Add similarity results to output (4 fields with new names)
     if similarity_results:
         final_df["sim_match_txn_id"] = [sr.get("sim_match_txn_id", None) for sr in similarity_results]
-        final_df["sim_score"] = [sr.get("sim_score", 0.0) for sr in similarity_results]
+        final_df["sim_score"] = [sr.get("sim_score", None) for sr in similarity_results]
+        final_df["sim_status"] = [sr.get("sim_status", None) for sr in similarity_results]
         final_df["sim_decision"] = [sr.get("sim_decision", None) for sr in similarity_results]
 
     # Reorden final exacto - TransactionID primero
@@ -1198,7 +1199,7 @@ def predict_fn(input_data, model_artifacts):
         output_cols.append("TransactionID")
     output_cols.extend(requested_cols)
     if similarity_results:
-        output_cols.extend(["sim_match_txn_id", "sim_score", "sim_decision"])
+        output_cols.extend(["sim_match_txn_id", "sim_score", "sim_status", "sim_decision"])
     
     final_df = final_df[output_cols]
 
