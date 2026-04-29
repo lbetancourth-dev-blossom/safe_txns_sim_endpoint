@@ -85,3 +85,4 @@ logs/
 Thumbs.db
 data/data_eng/SafeTransactionResults.csv
 data/data_eng/*.csv
+data/data_eng/SafeTxnResultsSilver.csv
