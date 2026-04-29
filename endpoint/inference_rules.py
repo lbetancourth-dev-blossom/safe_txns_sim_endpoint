@@ -795,8 +795,15 @@ def predict_fn(input_data, model_artifacts):
     if need_is_batch:
         columns_whitelist.add("TransactionCategory")
 
-    # 1) Validación
+    # 1) Validación y preservar TransactionID
     df = validate_gate(input_data, mode="filter", columns_whitelist=columns_whitelist, enforce_time_rules=(need_time or need_recency))
+    
+    # Preserve TransactionID from input for later use
+    transaction_ids = []
+    if "TransactionID" in input_data.columns:
+        transaction_ids = input_data["TransactionID"].tolist()
+    else:
+        transaction_ids = list(range(len(df)))
 
     # 2) Derivar SOLO lo que el modelo necesita
     if need_time:
@@ -1043,7 +1050,7 @@ def predict_fn(input_data, model_artifacts):
     similarity_results = []
     similarity_threshold = float(os.getenv("SIMILARITY_THRESHOLD", "0.90"))
     s3_bucket = os.getenv("SIMILARITY_S3_BUCKET", "blossom-analytics-safe-dev-nv")
-    s3_key = os.getenv("SIMILARITY_S3_KEY", "safe_txns/similarity/data/SafeTransactionResults/")  # Parquet directory
+    s3_key = os.getenv("SIMILARITY_S3_KEY", "safe_txns/similarity/data/wp_similarity.csv")  # CSV file
     
     if _ensure_similarity_loaded():
         print(f"[SIMILARITY] Checking similarity for {len(out_df)} transactions (threshold: {similarity_threshold})")
@@ -1075,49 +1082,36 @@ def predict_fn(input_data, model_artifacts):
                 matched = result.get("matched", False)
                 similarity_score = result.get("similarity_score", 0.0)
                 status_warning = result.get("status_warning", "NONE")
+                matched_txn_id = result.get("matched_transaction_id", None)
                 top_matches = result.get("top_matches", [])
                 
-                # Store similarity result
-                similarity_result = {
-                    "matched": matched,
-                    "similarity_score": float(similarity_score) if similarity_score is not None else 0.0,
-                    "similarity_status": status_warning if status_warning else "NONE",
-                    "top_matches": top_matches if top_matches else []
-                }
+                # Calculate sim_decision based on score and status
+                sim_decision = None
+                sim_status = None
+                if matched and status_warning in ["SAFE", "RISKY"]:
+                    sim_status = status_warning  # Store the original status (SAFE/RISKY)
+                    if similarity_score >= 0.90:
+                        sim_decision = "Accept" if status_warning == "SAFE" else "Reject"
                 
-                # CRITICAL: If similarity >= threshold, override with fixed rules
-                # Otherwise, keep the K-means model's decision
-                if matched and similarity_score >= similarity_threshold and status_warning in ["SAFE", "RISKY"]:
-                    print(f"[SIMILARITY] Row {idx}: Match found (score: {similarity_score:.4f}, status: {status_warning})")
-                    
-                    # Store original K-means decision for audit
-                    out_df.at[idx, "kmeans_original_decision"] = row["risk_decision"]
-                    out_df.at[idx, "kmeans_original_score"] = row["risk_score"]
-                    
-                    # Override with fixed similarity-based rules:
-                    # - risk_score = 70 (fixed)
-                    # - risk_decision based on S3 status
-                    out_df.at[idx, "risk_score"] = 70
-                    
-                    if status_warning == "RISKY":
-                        out_df.at[idx, "risk_decision"] = "Reject"
-                        print(f"[SIMILARITY]   → Override: risk_score=70, risk_decision=Reject (S3 status: RISKY)")
-                    elif status_warning == "SAFE":
-                        out_df.at[idx, "risk_decision"] = "Accept"
-                        print(f"[SIMILARITY]   → Override: risk_score=70, risk_decision=Accept (S3 status: SAFE)")
-                else:
-                    # No match or below threshold - keep K-means decision
-                    if similarity_score is not None and similarity_score > 0:
-                        print(f"[SIMILARITY] Row {idx}: Below threshold (score: {similarity_score:.4f}), keeping K-means decision")
+                # Log match if found
+                if matched:
+                    print(f"[SIMILARITY] Row {idx}: Match found (score: {similarity_score:.4f}, matched_id: {matched_txn_id}, status: {sim_status}, decision: {sim_decision})")
+                
+                # Store similarity fields with new names
+                similarity_result = {
+                    "sim_match_txn_id": matched_txn_id,
+                    "sim_score": float(similarity_score) if similarity_score is not None else None,
+                    "sim_status": sim_status,
+                    "sim_decision": sim_decision
+                }
                 
             except Exception as e:
                 print(f"[SIMILARITY] Error processing row {idx}: {repr(e)}")
                 similarity_result = {
-                    "matched": False,
-                    "similarity_score": 0.0,
-                    "similarity_status": "ERROR",
-                    "top_matches": [],
-                    "error": str(e)
+                    "sim_match_txn_id": None,
+                    "sim_score": None,
+                    "sim_status": None,
+                    "sim_decision": None
                 }
             
             similarity_results.append(similarity_result)
@@ -1126,10 +1120,10 @@ def predict_fn(input_data, model_artifacts):
         # Add empty similarity results
         for idx in range(len(out_df)):
             similarity_results.append({
-                "matched": False,
-                "similarity_score": 0.0,
-                "similarity_status": "DISABLED",
-                "top_matches": []
+                "sim_match_txn_id": None,
+                "sim_score": None,
+                "sim_status": None,
+                "sim_decision": None
             })
     
     # Similarity matching completed (results used internally for decision override)
@@ -1173,6 +1167,11 @@ def predict_fn(input_data, model_artifacts):
                 df_transformed[c] = 0.0
 
     final_df = pd.DataFrame(index=out_df.index)
+    
+    # Add TransactionID first (from input)
+    if "TransactionID" in input_data.columns:
+        final_df["TransactionID"] = input_data["TransactionID"].values
+    
     for c in requested_cols:
         if c.startswith("num__") or c.startswith("cat__"):
             final_df[c] = df_transformed[c]
@@ -1186,10 +1185,23 @@ def predict_fn(input_data, model_artifacts):
     final_df["audit_category"] = out_df["audit_category"]
     final_df["audit_explanation"] = out_df["audit_explanation"]
     final_df["ux_copy"] = out_df["ux_copy"]
-    # similarity_info removed from output (used only internally for decision override)
+    
+    # Add similarity results to output (4 fields with new names)
+    if similarity_results:
+        final_df["sim_match_txn_id"] = [sr.get("sim_match_txn_id", None) for sr in similarity_results]
+        final_df["sim_score"] = [sr.get("sim_score", None) for sr in similarity_results]
+        final_df["sim_status"] = [sr.get("sim_status", None) for sr in similarity_results]
+        final_df["sim_decision"] = [sr.get("sim_decision", None) for sr in similarity_results]
 
-    # Reorden final exacto
-    final_df = final_df[requested_cols]
+    # Reorden final exacto - TransactionID primero
+    output_cols = []
+    if "TransactionID" in final_df.columns:
+        output_cols.append("TransactionID")
+    output_cols.extend(requested_cols)
+    if similarity_results:
+        output_cols.extend(["sim_match_txn_id", "sim_score", "sim_status", "sim_decision"])
+    
+    final_df = final_df[output_cols]
 
     print("[PRED] done, rows:", len(final_df))
     return final_df.to_dict(orient="records")

@@ -65,8 +65,8 @@ except ImportError as e:
 # =========================
 
 DEFAULT_THRESHOLD = 0.90
-DEFAULT_S3_BUCKET = "blossom-analytics-safe-dev-nv"
-DEFAULT_S3_KEY = "safe_txns/similarity/data/SafeTransactionResults/"  # Parquet directory
+DEFAULT_S3_BUCKET = "blossom-analytics-datalake-dev"
+DEFAULT_S3_KEY = "datalake/silver/SAFE/safetransactionresults/data/"  # Parquet directory
 
 # Global cache for reference data (keyed by s3_uri or local path)
 # Cache structure: {cache_key: {'data': (df, vectors, labels, ids), 'file_count': int}}
@@ -158,6 +158,27 @@ def _load_parquet_directory_from_s3(s3_client, bucket: str, prefix: str) -> pd.D
     # Concatenate all dataframes
     df_combined = pd.concat(dfs, ignore_index=True)
     logger.info(f"[SIMILARITY] Combined {len(dfs)} files into {len(df_combined)} records")
+    
+    # Normalize column names (parquet files use lowercase, we need camelCase)
+    column_mapping = {
+        'uuid': 'uuid',
+        'transactionid': 'transactionId',
+        'idfi': 'idFi',
+        'statuswarning': 'statusWarning',
+        'metadata': 'metadata',
+        'createdat': 'createdAt',
+        'updatedat': 'updatedAt'
+    }
+    df_combined.columns = [column_mapping.get(col.lower(), col) for col in df_combined.columns]
+    
+    # Remove CDC metadata columns
+    cdc_columns = ['_last_cdc_timestamp']
+    for col in cdc_columns:
+        if col in df_combined.columns:
+            df_combined = df_combined.drop(columns=[col])
+            logger.debug(f"[SIMILARITY] Removed CDC column: {col}")
+    
+    logger.info(f"[SIMILARITY] Normalized column names: {list(df_combined.columns)}")
     
     return df_combined
 
@@ -768,10 +789,11 @@ def find_similar_transaction(
         top_indices = np.argsort(similarities)[::-1][:top_k]
         top_scores = similarities[top_indices]
         
-        # Build top matches list (without TransactionID)
+        # Build top matches list with transaction_id
         top_matches = []
         for idx, score in zip(top_indices, top_scores):
             top_matches.append({
+                "transaction_id": ref_ids[idx],
                 "similarity_score": float(score),
                 "status_warning": ref_labels[idx]
             })
@@ -780,12 +802,14 @@ def find_similar_transaction(
         best_idx = top_indices[0]
         best_score = float(similarities[best_idx])
         best_label = ref_labels[best_idx]
+        best_txn_id = ref_ids[best_idx]
         
         # Check if above threshold
         matched = best_score >= threshold
         
         result = {
             "matched": matched,
+            "matched_transaction_id": best_txn_id if matched else None,
             "similarity_score": best_score,
             "status_warning": best_label if matched else "NONE",
             "top_matches": top_matches,
