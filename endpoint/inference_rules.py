@@ -1049,7 +1049,7 @@ def predict_fn(input_data, model_artifacts):
     # ===== Similarity Matching (MANDATORY) =====
     similarity_results = []
     similarity_threshold = float(os.getenv("SIMILARITY_THRESHOLD", "0.90"))
-    s3_bucket = os.getenv("SIMILARITY_S3_BUCKET", "blossom-analytics-datalake-dev")
+    s3_bucket = os.getenv("SIMILARITY_S3_BUCKET", "blossom-analytics-datalake-alpha")
     s3_key = os.getenv("SIMILARITY_S3_KEY", "datalake/silver/SAFE/safetransactionresults/data/")  # Parquet directory
     
     if _ensure_similarity_loaded():

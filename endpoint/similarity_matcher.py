@@ -65,7 +65,7 @@ except ImportError as e:
 # =========================
 
 DEFAULT_THRESHOLD = 0.90
-DEFAULT_S3_BUCKET = "blossom-analytics-datalake-dev"
+DEFAULT_S3_BUCKET = "blossom-analytics-datalake-alpha"
 DEFAULT_S3_KEY = "datalake/silver/SAFE/safetransactionresults/data/"  # Parquet directory
 
 # Global cache for reference data (keyed by s3_uri or local path)
