@@ -231,6 +231,18 @@ def main():
         help=f'AWS profile name (default: {AWS_PROFILE})'
     )
     parser.add_argument(
+        '--bucket',
+        type=str,
+        default=S3_BUCKET,
+        help=f'S3 bucket name (default: {S3_BUCKET})'
+    )
+    parser.add_argument(
+        '--prefix',
+        type=str,
+        default=S3_PREFIX,
+        help=f'S3 prefix path (default: {S3_PREFIX})'
+    )
+    parser.add_argument(
         '--output',
         type=str,
         default=OUTPUT_FILE,
@@ -245,14 +257,14 @@ def main():
     s3_client = session.client('s3')
     
     # List Parquet files
-    parquet_files = list_s3_parquet_files(s3_client, S3_BUCKET, S3_PREFIX)
+    parquet_files = list_s3_parquet_files(s3_client, args.bucket, args.prefix)
     
     if not parquet_files:
         print("[ERROR] No Parquet files found!")
         sys.exit(1)
     
     # Extract data
-    df = extract_all_data(s3_client, S3_BUCKET, parquet_files)
+    df = extract_all_data(s3_client, args.bucket, parquet_files)
     
     # Process and save
     process_and_save(df, args.output)
