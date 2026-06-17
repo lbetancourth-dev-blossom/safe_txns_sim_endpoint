@@ -19,7 +19,7 @@ import pandas as pd
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler
 from scipy import sparse
-from typing import Optional, Set, List, Tuple
+from typing import Optional, Set, List, Tuple, Dict, Any
 
 # ---- Lazy import para reglas (opcionalmente desactivables con env DISABLE_RULES=1) ----
 HAS_RULES = None
@@ -686,6 +686,73 @@ def _clamp_to_band(score: int, decision: str) -> int:
     lo, hi = _BANDS.get(decision, (0, 100))
     s = 0 if pd.isna(score) else int(round(score))
     return max(lo, min(hi, s))
+
+
+# =========================
+# Similarity Input Validation (D1 graceful — never raises)
+# =========================
+
+def _validate_similarity_input(input_data: pd.DataFrame) -> Tuple[bool, List[int]]:
+    """
+    Validate that idOLBUserTxns is present and non-null for each row.
+    Also validates createdAtTxns per D1 — both fields must be valid for similarity.
+
+    Returns (all_valid, missing_rows). For rows in missing_rows, similarity
+    will return sim_*=null but K-means/rules outputs are preserved.
+
+    NOTE: Per D1 default, we do NOT raise. We mark rows as similarity-skip.
+    """
+    import logging as _logging
+    _val_logger = _logging.getLogger(__name__)
+
+    missing_rows: List[int] = []
+
+    for positional_idx, (idx, row) in enumerate(input_data.iterrows()):
+        row_bad = False
+        row_index = positional_idx  # use positional index as returned
+
+        # Check idOLBUserTxns
+        if "idOLBUserTxns" not in input_data.columns:
+            _val_logger.info(
+                f"[SIMILARITY][VALIDATION] Row {row_index}: missing idOLBUserTxns column, sim_*=null for this row"
+            )
+            row_bad = True
+        else:
+            val = row.get("idOLBUserTxns")
+            if val is None or (isinstance(val, float) and pd.isna(val)) or pd.isnull(val):
+                _val_logger.info(
+                    f"[SIMILARITY][VALIDATION] Row {row_index}: missing idOLBUserTxns, sim_*=null for this row"
+                )
+                row_bad = True
+            else:
+                try:
+                    int(val)
+                except (ValueError, TypeError):
+                    _val_logger.info(
+                        f"[SIMILARITY][VALIDATION] Row {row_index}: idOLBUserTxns not castable to int, sim_*=null for this row"
+                    )
+                    row_bad = True
+
+        # Check createdAtTxns (D1: also required for similarity window)
+        if not row_bad:
+            if "createdAtTxns" not in input_data.columns:
+                _val_logger.info(
+                    f"[SIMILARITY][VALIDATION] Row {row_index}: missing createdAtTxns column, sim_*=null for this row"
+                )
+                row_bad = True
+            else:
+                cv = row.get("createdAtTxns")
+                if cv is None or (isinstance(cv, float) and pd.isna(cv)) or pd.isnull(cv):
+                    _val_logger.info(
+                        f"[SIMILARITY][VALIDATION] Row {row_index}: missing createdAtTxns, sim_*=null for this row"
+                    )
+                    row_bad = True
+
+        if row_bad:
+            missing_rows.append(row_index)
+
+    all_valid = len(missing_rows) == 0
+    return all_valid, missing_rows
 
 def _step_up(decision: str) -> str:
     order = ["Accept", "User Auth", "Admin Review", "Reject"]
