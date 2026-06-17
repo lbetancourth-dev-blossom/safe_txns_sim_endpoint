@@ -276,6 +276,73 @@ def load_reference_data_from_athena(
         return (None, None, None, None)
 
 
+def _extract_vectors_from_df(
+    df: pd.DataFrame,
+) -> Tuple[Optional[pd.DataFrame], Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]]:
+    """
+    Extract feature vectors, labels, and transaction IDs from a normalized DataFrame.
+
+    Used by both load_reference_data_from_athena() and load_reference_data_from_s3()
+    to avoid duplicating the metadata/decisionResult parsing loop.
+
+    Returns (df_valid, feature_matrix, labels_array, ids_array), or
+    (None, None, None, None) if no valid records are found.
+    """
+    required_cols = ["metadata", "statusWarning"]
+    missing_cols = [c for c in required_cols if c not in df.columns]
+    if missing_cols:
+        logger.warning("[SIMILARITY] _extract_vectors_from_df: missing columns %s", missing_cols)
+        return (None, None, None, None)
+
+    vectors: list = []
+    labels: list = []
+    transaction_ids: list = []
+    valid_indices: list = []
+
+    for idx, row in df.iterrows():
+        try:
+            metadata_raw = row.get("metadata")
+            if pd.isna(metadata_raw):
+                continue
+            metadata = json.loads(metadata_raw) if isinstance(metadata_raw, str) else metadata_raw
+            decision_result = metadata.get("decisionResult")
+            if not decision_result:
+                continue
+            if HAS_SCHEMA_VALIDATOR and validate_features_only is not None:
+                if not validate_features_only(decision_result, require_all=False):
+                    continue
+            feature_vector = _extract_feature_vector(decision_result)
+            if feature_vector is None or len(feature_vector) == 0:
+                continue
+            status = str(row.get("statusWarning", "")).strip().upper()
+            if status not in ("SAFE", "RISKY"):
+                continue
+            txn_id = (
+                row.get("TransactionID")
+                or row.get("transactionId")
+                or row.get("transaction_id")
+                or str(idx)
+            )
+            vectors.append(feature_vector)
+            labels.append(status)
+            transaction_ids.append(str(txn_id))
+            valid_indices.append(idx)
+        except Exception as e:
+            logger.warning("[SIMILARITY] _extract_vectors_from_df row %s: %s", idx, e)
+            continue
+
+    if not vectors:
+        return (None, None, None, None)
+
+    df_valid = df.iloc[valid_indices].reset_index(drop=True)
+    return (
+        df_valid,
+        np.array(vectors),
+        np.array(labels),
+        np.array(transaction_ids),
+    )
+
+
 def _count_parquet_files_in_s3(s3_client, bucket: str, prefix: str) -> int:
     """Count number of parquet files in S3 directory"""
     if not prefix.endswith('/'):
