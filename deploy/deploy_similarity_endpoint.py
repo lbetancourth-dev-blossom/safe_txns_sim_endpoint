@@ -39,9 +39,10 @@ print("="*80)
 print("DEPLOYING SAFE TRANSACTIONS SIMILARITY ENDPOINT")
 print("="*80)
 
-# Initialize clients
-s3 = boto3.client('s3', region_name='us-east-1')
-sm = boto3.client('sagemaker', region_name='us-east-1')
+# Initialize clients with SSO profile
+session = boto3.Session(profile_name='blossom-dev', region_name='us-east-1')
+s3 = session.client('s3')
+sm = session.client('sagemaker')
 
 # Step 1: Download artifacts from S3
 print("\n📥 Step 1: Downloading model artifacts from S3...")
