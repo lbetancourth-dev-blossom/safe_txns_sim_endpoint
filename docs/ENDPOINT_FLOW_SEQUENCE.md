@@ -95,11 +95,15 @@
 ┌─────────────────────────────────────────────────────────────────────────┐
 │  PASO 5: SIMILARITY MATCHING (SIEMPRE SE EJECUTA)                      │
 │  ─────────────────────────────────────────────────────                 │
-│  Líneas: 1049-1128                                                      │
+│  Líneas: 1116-1195 (D2: Athena single-source, no Parquet fallback)      │
 │                                                                          │
-│  ✓ Load reference data from Silver layer Parquet                        │
-│    (s3://blossom-analytics-datalake-dev/datalake/silver/SAFE/           │
-│     safetransactionresults/data/)                                       │
+│  ✓ Validate input contract (D1: graceful — idOLBUserTxns + createdAt)   │
+│  ✓ Load reference data from Athena (cross-account: dev → alpha)         │
+│    dlh_silver_safe_alpha.safetransactionresults                          │
+│    Sliding window: now() - 6 months (computed at call time, not load)   │
+│    Staging: s3://blossom-analytics-datalake-alpha/datalake/gold/         │
+│             athena-metadata/ (cross-account to alpha)                   │
+│    Timeout: 10s (D4) → sim_*=null, K-means intact on failure            │
 │  ✓ Para cada transacción:                                               │
 │    - Extract ONLY num__ and cat__ features (NO post-processing)         │
 │    - Calculate cosine similarity vs all reference transactions          │
@@ -185,28 +189,37 @@
 
 ### 4. Similarity (Información Adicional)
 - **Siempre se ejecuta** (después de K-means/Rules)
+- **D2 CLOSED:** fuente única = Athena (cross-account dev → alpha). NO Parquet fallback.
 - **NO modifica** el `risk_score` ni `risk_decision` final
-- Busca transacciones similares en Silver layer (243 refs)
+- Consulta `dlh_silver_safe_alpha.safetransactionresults` via PyAthena parameterized query (F1)
+- Ventana deslizante: now() - 6 meses (calculada en cada llamada, NO en carga del módulo)
+- **D1 CLOSED:** si `idOLBUserTxns` o `createdAtTxns` faltan → sim_*=null, K-means OK
+- **D4 CLOSED:** timeout 10s → sim_*=null, K-means OK, log `similarity.athena_failure`
 - Usa **solo features** (num__ y cat__), NO post-processing fields
 - Agrega 4 campos informativos al output:
-  - `sim_match_txn_id`: ID de match encontrado
-  - `sim_score`: Similitud coseno (0.0-1.0)
-  - `sim_status`: Status del match (SAFE/RISKY/PENDING)
-  - `sim_decision`: Accept/Reject si score >= 0.90
+  - `sim_match_txn_id`: ID de match encontrado (o null)
+  - `sim_score`: Similitud coseno 0.0-1.0 (o null si Athena falla/no hay datos)
+  - `sim_status`: Status del match SAFE/RISKY (o null)
+  - `sim_decision`: Accept/Reject si score >= 0.90 (o null)
 
 ---
 
-## ⚙️ Variables de Entorno
+## Variables de Entorno
 
 ```bash
 # Deshabilitar componentes opcionales
 DISABLE_RULES=1          # Salta el paso de Rules (solo K-means)
 DISABLE_SIMILARITY=1     # Salta Similarity matching
 
-# Configurar Similarity
-SIMILARITY_THRESHOLD=0.90              # Umbral de similitud (default: 0.90)
-SIMILARITY_S3_BUCKET=...               # Bucket de datos de referencia
-SIMILARITY_S3_KEY=.../data/            # Path a Parquet files
+# Configurar Similarity — Athena single-source (D2, NO USE_ATHENA toggle)
+SIMILARITY_THRESHOLD=0.90
+SIMILARITY_ATHENA_DATABASE=dlh_silver_safe_alpha
+SIMILARITY_ATHENA_TABLE=safetransactionresults
+SIMILARITY_ATHENA_S3_STAGING=s3://blossom-analytics-datalake-alpha/datalake/gold/athena-metadata/
+SIMILARITY_ATHENA_REGION=us-east-2
+ATHENA_WINDOW_MONTHS=6
+ATHENA_TIMEOUT_SECONDS=10
+# DEPRECATED (removed by D2): SIMILARITY_S3_BUCKET, SIMILARITY_S3_KEY, USE_ATHENA
 ```
 
 ---
