@@ -951,6 +951,9 @@ def find_similar_transaction(
     threshold: float = DEFAULT_THRESHOLD,
     metric: str = "cosine",
     top_k: int = 1,
+    idolbuser: Optional[int] = None,
+    window_months: int = 6,
+    timeout_seconds: int = 10,
     s3_bucket: Optional[str] = None,
     s3_key: Optional[str] = None,
     s3_uri: Optional[str] = None,
@@ -959,18 +962,21 @@ def find_similar_transaction(
 ) -> Dict[str, Any]:
     """
     Find similar historical transaction and return matching label.
-    
+
     Args:
         query_result: Dictionary containing transaction decisionResult fields
         threshold: Minimum similarity score to consider a match (0.0-1.0)
         metric: Similarity metric to use ("cosine" or "euclidean")
         top_k: Number of top matches to consider
+        idolbuser: Athena query filter — transaction user ID
+        window_months: Sliding window size in months (default 6)
+        timeout_seconds: Athena query timeout (default 10)
         s3_bucket: S3 bucket name (optional, overrides default)
         s3_key: S3 key path (optional, overrides default)
         s3_uri: Full S3 URI (optional, takes precedence over bucket/key)
         local_csv_path: Path to local CSV file for testing (bypasses S3)
         force_reload: Force reload reference data from S3
-    
+
     Returns:
         Dictionary with keys:
         - matched: bool, whether a match was found above threshold

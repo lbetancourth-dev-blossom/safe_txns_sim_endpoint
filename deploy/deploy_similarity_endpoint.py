@@ -31,7 +31,8 @@ CODE_FILES = [
     "endpoint/inference_rules.py",
     "endpoint/similarity_matcher.py",
     "endpoint/schema_validator.py",
-    "endpoint/statistical_rules.py"
+    "endpoint/statistical_rules.py",
+    "endpoint/requirements.txt",
 ]
 
 print("="*80)
@@ -69,12 +70,11 @@ with tarfile.open(LOCAL_TAR_PATH, "w:gz") as tar:
         tar.add(local_path, arcname=artifact)
         print(f"    ✓ {artifact}")
     
-    # Add code files
+    # Add code files to root of tarball (SageMaker expects them in /)
     print("  Adding code files:")
     for code_file in CODE_FILES:
         if os.path.exists(code_file):
-            # Add to code/ directory in tarball
-            arcname = f"code/{os.path.basename(code_file)}"
+            arcname = os.path.basename(code_file)
             tar.add(code_file, arcname=arcname)
             print(f"    ✓ {code_file} -> {arcname}")
         else:
@@ -105,10 +105,14 @@ model_response = sm.create_model(
         'Environment': {
             'SAGEMAKER_PROGRAM': 'inference_rules.py',
             'SAGEMAKER_SUBMIT_DIRECTORY': model_s3_uri,
-            # Similarity configuration
+            # Similarity Athena configuration (DATA-1264: Athena is sole source)
             'SIMILARITY_THRESHOLD': '0.90',
-            'SIMILARITY_S3_BUCKET': BUCKET,
-            'SIMILARITY_S3_KEY': 'safe_txns/similarity/data/SafeTransactionResults/',  # Parquet directory
+            'SIMILARITY_ATHENA_DATABASE': 'dlh_silver_safe_alpha',
+            'SIMILARITY_ATHENA_TABLE': 'safetransactionresults',
+            'SIMILARITY_ATHENA_S3_STAGING': 's3://blossom-analytics-datalake-alpha/datalake/gold/athena-metadata/',
+            'SIMILARITY_ATHENA_REGION': 'us-east-2',
+            'ATHENA_WINDOW_MONTHS': '6',
+            'ATHENA_TIMEOUT_SECONDS': '10',
         }
     },
     ExecutionRoleArn=ROLE_ARN
