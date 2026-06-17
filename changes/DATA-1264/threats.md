@@ -2,7 +2,7 @@
 
 **Overall risk level:** Medium (downgraded from High on 2026-06-17 after gate decisions: F1 mitigated by parameterized queries, F2 accepted with pre-merge platform action, F3 accepted with external owner, F5 redesigned without separate script, F5+ added structured logging)
 **Date:** 2026-06-16 (initial analysis) · 2026-06-17 (gate decisions applied)
-**Reviewer:** blossom-security (automated) · gate decisions: Luis Betancourth
+**Reviewer:** blossom-security (automated) · gate decisions: Landneyker Betancourth
 
 ---
 
@@ -318,7 +318,7 @@ No direct exposure. The change affects risk scoring only — it does not alter p
 
 Overall risk level is **Medium** (downgraded from High on 2026-06-17 after gate decisions applied).
 
-**HUMAN GATE CLOSED.** The application security reviewer (Luis Betancourth) reviewed this threats.md on 2026-06-17 and closed the disposition of F1 / F2 / F3 / F5 / F5+. See the approval line at the bottom of this file.
+**HUMAN GATE CLOSED.** The application security reviewer (Landneyker Betancourth) reviewed this threats.md on 2026-06-17 and closed the disposition of F1 / F2 / F3 / F5 / F5+. See the approval line at the bottom of this file.
 
 Resolution summary:
 - F1 (f-string SQL) → **mitigated** via PyAthena parameterized queries (gate applied 2026-06-17).
@@ -343,7 +343,7 @@ The `/blossom-workflow:execute` command greps the bottom of this file for the li
 
 ---
 
-**Decision: approved by Luis Betancourth — 2026-06-17**
+**Decision: approved by Landneyker Betancourth — 2026-06-17**
 
 Gate decisions:
 - F1 → mitigated via PyAthena parameterized queries

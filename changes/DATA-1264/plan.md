@@ -155,7 +155,7 @@ phase: plan
 sub_phase: dcr
 stack: py-agents
 status: closed
-closed_by: "Luis Betancourth"
+closed_by: "Landneyker Betancourth"
 closed_at: "2026-06-16"
 blocks:
   - id: D1
@@ -579,7 +579,7 @@ DCR cerrado. Siguiente: security review automatizado + generación final de `spe
 
 ---
 
-**Decision: approved by Luis Betancourth — 2026-06-16**
+**Decision: approved by Landneyker Betancourth — 2026-06-16**
 
 All DCR decisions closed, HLTC blocks reviewed. Ready for security + spec generation.
 
