@@ -992,15 +992,45 @@ def find_similar_transaction(
             logger.info(f"[SIMILARITY] Loading reference data from local file: {local_csv_path}")  # noqa: F1-no-fstring-sql
             ref_df, ref_vectors, ref_labels, ref_ids = _load_from_local_csv(local_csv_path)
             source_uri = f"file://{local_csv_path}"
+        elif idolbuser is not None:
+            # D2 CLOSED: Use Athena as the sole source when idolbuser provided
+            logger.info(f"[SIMILARITY] Loading from Athena for user {_hash_idolbuser(idolbuser)}")
+            try:
+                ref_df, ref_vectors, ref_labels, ref_ids = load_reference_data_from_athena(
+                    idolbuser=idolbuser,
+                    window_months=window_months,
+                    timeout_seconds=timeout_seconds,
+                    force_reload=force_reload
+                )
+                source_uri = f"athena:idolbuser={_hash_idolbuser(idolbuser)}:window={window_months}m"
+            except TimeoutError as e:
+                logger.error(f"[SIMILARITY] Athena timeout for user {_hash_idolbuser(idolbuser)}: {e}")
+                return {
+                    "sim_match_txn_id": None,
+                    "sim_score": None,
+                    "sim_status": None,
+                    "sim_decision": None,
+                    "error": f"Athena timeout: {str(e)}"
+                }
+
+            # Check if data loading failed
+            if ref_vectors is None or ref_labels is None:
+                logger.warning(f"[SIMILARITY] No Athena data for user {_hash_idolbuser(idolbuser)}")
+                return {
+                    "sim_match_txn_id": None,
+                    "sim_score": None,
+                    "sim_status": None,
+                    "sim_decision": None
+                }
         else:
-            # Load from S3
+            # Load from S3 (legacy fallback)
             ref_df, ref_vectors, ref_labels, ref_ids = load_reference_data_from_s3(
                 bucket=s3_bucket,
                 key=s3_key,
                 s3_uri=s3_uri,
                 force_reload=force_reload
             )
-            
+
             # Check if data loading failed (returns None values)
             if ref_vectors is None or ref_labels is None:
                 logger.warning("[SIMILARITY] No reference data available - similarity matching disabled")
@@ -1011,7 +1041,7 @@ def find_similar_transaction(
                     "top_matches": [],
                     "error": "No reference data available"
                 }
-            
+
             # Determine source URI for logging
             if s3_uri:
                 source_uri = s3_uri
@@ -1079,32 +1109,47 @@ def find_similar_transaction(
         best_score = float(similarities[best_idx])
         best_label = ref_labels[best_idx]
         best_txn_id = ref_ids[best_idx]
-        
+
         # Check if above threshold
         matched = best_score >= threshold
-        
-        result = {
-            "matched": matched,
-            "matched_transaction_id": best_txn_id if matched else None,
-            "similarity_score": best_score,
-            "status_warning": best_label if matched else "NONE",
-            "top_matches": top_matches,
-            "threshold_used": threshold,
-            "metric_used": metric,
-            "reference_count": len(ref_vectors),
-            "s3_source": source_uri
-        }
-        
-        if matched:
-            logger.info(
-                f"[SIMILARITY] MATCH FOUND: score={best_score:.4f}, "
-                f"label={best_label}, threshold={threshold}"
-            )
+
+        # Determine return format based on Athena source
+        if idolbuser is not None:
+            # Athena source: return fields expected by inference_rules.py
+            result = {
+                "sim_match_txn_id": best_txn_id if matched else None,
+                "sim_score": best_score if matched else None,
+                "sim_status": best_label if matched else None,
+                "sim_decision": "match" if matched else None
+            }
+            if matched:
+                logger.info(
+                    f"[SIMILARITY] ATHENA MATCH: txn={best_txn_id}, "
+                    f"score={best_score:.4f}, user={_hash_idolbuser(idolbuser)}"
+                )
         else:
-            logger.info(
-                f"[SIMILARITY] No match: best_score={best_score:.4f} < threshold={threshold}"
-            )
-        
+            # S3/legacy source: return full result object
+            result = {
+                "matched": matched,
+                "matched_transaction_id": best_txn_id if matched else None,
+                "similarity_score": best_score,
+                "status_warning": best_label if matched else "NONE",
+                "top_matches": top_matches,
+                "threshold_used": threshold,
+                "metric_used": metric,
+                "reference_count": len(ref_vectors),
+                "s3_source": source_uri
+            }
+            if matched:
+                logger.info(
+                    f"[SIMILARITY] MATCH FOUND: score={best_score:.4f}, "
+                    f"label={best_label}, threshold={threshold}"
+                )
+            else:
+                logger.info(
+                    f"[SIMILARITY] No match: best_score={best_score:.4f} < threshold={threshold}"
+                )
+
         return result
     
     except Exception as e:
