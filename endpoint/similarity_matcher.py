@@ -299,24 +299,40 @@ def _extract_vectors_from_df(
     transaction_ids: list = []
     valid_indices: list = []
 
+    # Logging: track filtering stages
+    input_count = len(df)
+    metadata_count = 0
+    decision_count = 0
+    vector_count = 0
+    status_count = 0
+
     for idx, row in df.iterrows():
         try:
             metadata_raw = row.get("metadata")
             if pd.isna(metadata_raw):
                 continue
+            metadata_count += 1
+
             metadata = json.loads(metadata_raw) if isinstance(metadata_raw, str) else metadata_raw
             decision_result = metadata.get("decisionResult")
             if not decision_result:
                 continue
+            decision_count += 1
+
             if HAS_SCHEMA_VALIDATOR and validate_features_only is not None:
                 if not validate_features_only(decision_result, require_all=False):
                     continue
+
             feature_vector = _extract_feature_vector(decision_result)
             if feature_vector is None or len(feature_vector) == 0:
                 continue
+            vector_count += 1
+
             status = str(row.get("statusWarning", "")).strip().upper()
             if status not in ("SAFE", "RISKY"):
                 continue
+            status_count += 1
+
             txn_id = (
                 row.get("TransactionID")
                 or row.get("transactionId")
@@ -331,7 +347,19 @@ def _extract_vectors_from_df(
             logger.warning("[SIMILARITY] _extract_vectors_from_df row %s: %s", idx, e)
             continue
 
+    # Log filtering summary
+    logger.info(
+        "[SIMILARITY] Vector extraction: input=%d, has_metadata=%d, has_decision=%d, "
+        "has_vector=%d, valid_status=%d, final=%d",
+        input_count, metadata_count, decision_count, vector_count, status_count, len(vectors)
+    )
+
     if not vectors:
+        logger.warning(
+            "[SIMILARITY] No valid vectors extracted from %d rows. "
+            "Check metadata structure and decisionResult fields.",
+            input_count
+        )
         return (None, None, None, None)
 
     df_valid = df.iloc[valid_indices].reset_index(drop=True)
