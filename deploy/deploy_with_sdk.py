@@ -16,12 +16,19 @@ sklearn_model = SKLearnModel(
     model_data=model_data,
     role=role,
     entry_point="inference_rules.py",
+    source_dir="endpoint",
     framework_version="1.2-1",
     py_version="py3",
     env={
         "SIMILARITY_THRESHOLD": "0.90",
-        "SIMILARITY_S3_BUCKET": "blossom-analytics-safe-dev-nv",
-        "SIMILARITY_S3_KEY": "safe_txns/similarity/data/SafeTransactionResults/",  # Parquet directory
+        # DEPRECATED (D2): SIMILARITY_S3_BUCKET and SIMILARITY_S3_KEY removed — Athena is now the only source
+        # Athena env vars (D2 closed — single-source, NO USE_ATHENA toggle)
+        "SIMILARITY_ATHENA_DATABASE": "dlh_silver_safe_alpha",
+        "SIMILARITY_ATHENA_TABLE": "safetransactionresults",
+        "SIMILARITY_ATHENA_S3_STAGING": "s3://blossom-analytics-datalake-alpha/datalake/gold/athena-metadata/",
+        "SIMILARITY_ATHENA_REGION": "us-east-2",
+        "ATHENA_WINDOW_MONTHS": "6",
+        "ATHENA_TIMEOUT_SECONDS": "10",
     }
 )
 

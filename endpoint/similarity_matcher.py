@@ -21,13 +21,36 @@ Integration:
 
 import os
 import json
+import hashlib
+import concurrent.futures
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Tuple, Optional, Any
+from datetime import datetime, timezone
 from sklearn.metrics.pairwise import cosine_similarity
 import boto3
 from io import StringIO, BytesIO
 import logging
+
+# Configure logging (must be before any use of logger)
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Athena connect (imported at module level so tests can patch endpoint.similarity_matcher.connect)
+try:
+    from pyathena import connect
+    HAS_PYATHENA = True
+except ImportError:
+    HAS_PYATHENA = False
+    logger.warning("[SIMILARITY] pyathena not available. Athena support disabled.")
+    connect = None  # type: ignore[assignment]
+
+try:
+    from dateutil.relativedelta import relativedelta
+    HAS_DATEUTIL = True
+except ImportError:
+    HAS_DATEUTIL = False
+    logger.warning("[SIMILARITY] python-dateutil not available.")
 
 # Try to import pyarrow for parquet support
 try:
@@ -36,10 +59,6 @@ try:
 except ImportError:
     HAS_PARQUET = False
     logger.warning("[SIMILARITY] pyarrow not available. Parquet support disabled.")
-
-# Configure logging
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 # Try to import schema validator
 try:
@@ -71,6 +90,190 @@ DEFAULT_S3_KEY = "datalake/silver/SAFE/safetransactionresults/data/"  # Parquet 
 # Global cache for reference data (keyed by s3_uri or local path)
 # Cache structure: {cache_key: {'data': (df, vectors, labels, ids), 'file_count': int}}
 _REFERENCE_CACHE = {}
+
+# Athena cache: keyed by "athena:{idolbuser_int}:{end_minute_str}"
+_ATHENA_CACHE: Dict[str, Any] = {}
+
+
+# =========================
+# F5+ Logging helpers
+# =========================
+
+def classify_exception(exc: BaseException) -> str:
+    """Map an exception to an observable category for structured logging.
+
+    Categories:
+      - "permission":  IAM denied (cross-account broken)
+      - "throttling":  Athena/AWS throttled the request
+      - "timeout":     query exceeded ATHENA_TIMEOUT_SECONDS
+      - "query_error": SQL syntax or schema drift
+      - "unknown":     anything else
+    """
+    msg = str(exc).lower()
+    if isinstance(exc, PermissionError) or "accessdenied" in msg or "access denied" in msg:
+        return "permission"
+    if "throttl" in msg or "ratelimit" in msg or "rate exceeded" in msg:
+        return "throttling"
+    if isinstance(exc, TimeoutError) or "timeout" in msg or "timed out" in msg:
+        return "timeout"
+    if "syntaxerror" in msg or "table not found" in msg or "column" in msg:
+        return "query_error"
+    return "unknown"
+
+
+def _hash_idolbuser(idolbuser) -> str:
+    """sha256-truncated hash for use as observability dimension. NEVER log raw idolbuser."""
+    return hashlib.sha256(str(idolbuser).encode()).hexdigest()[:16]
+
+
+# =========================
+# Athena: window + column normalisation
+# =========================
+
+def _compute_sliding_window(window_months: int = 6) -> Tuple[datetime, datetime]:
+    """
+    Compute (start, end) for the sliding window. End = now() UTC,
+    start = end - relativedelta(months=window_months).
+
+    Returns datetime objects in UTC. Formatting to Athena TIMESTAMP literal
+    happens in load_reference_data_from_athena().
+    """
+    end = datetime.now(timezone.utc)
+    start = end - relativedelta(months=window_months)
+    return start, end
+
+
+def _normalize_athena_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Normalize Athena column names (all lowercase from Glue) to the canonical
+    camelCase names used by DTYPE_MAP in endpoint/inference_rules.py,
+    _load_from_local_csv, and predict_fn.
+
+    Canonical column mapping (self-contained):
+      transactionid  -> TransactionID   (uppercase D — matches DTYPE_MAP)
+      idolbuser      -> idOLBUser
+      createdat      -> createdAt
+      statuswarning  -> statusWarning
+      metadata       -> metadata (unchanged)
+    """
+    column_mapping = {
+        "transactionid": "TransactionID",
+        "idolbuser": "idOLBUser",
+        "createdat": "createdAt",
+        "statuswarning": "statusWarning",
+        "metadata": "metadata",
+    }
+    df = df.rename(columns={c: column_mapping.get(c.lower(), c) for c in df.columns})
+    return df
+
+
+# =========================
+# Athena Data Loading
+# =========================
+
+def load_reference_data_from_athena(
+    idolbuser: int,
+    window_months: int = 6,
+    force_reload: bool = False,
+    timeout_seconds: int = 10,
+) -> Tuple[Optional[pd.DataFrame], Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]]:
+    """
+    Load reference transaction data from Athena, filtered by idolbuser and
+    sliding window [now() - window_months, now()].
+
+    Window is computed AT CALL TIME, not at module load. Critical because the
+    SageMaker container stays warm for days; computing at load would freeze
+    the window.
+
+    Returns (df, feature_vectors, labels, txn_ids) — same shape as
+    load_reference_data_from_s3(). Returns (None, None, None, None) on any
+    failure (graceful degradation, follows the L527-528 pattern).
+    """
+    global _ATHENA_CACHE
+
+    # Defense-in-depth: int cast raises ValueError/TypeError for non-numeric input
+    idolbuser_int = int(idolbuser)
+
+    # Compute sliding window at call time (never at module load)
+    start, end = _compute_sliding_window(window_months)
+    cache_key = f"athena:{idolbuser_int}:{end.strftime('%Y-%m-%d-%H-%M')}"
+
+    if not force_reload and cache_key in _ATHENA_CACHE:
+        logger.info(f"[SIMILARITY][ATHENA] Cache hit for {cache_key}")
+        return _ATHENA_CACHE[cache_key]
+
+    try:
+        s3_staging = os.getenv(
+            "SIMILARITY_ATHENA_S3_STAGING",
+            "s3://blossom-analytics-datalake-alpha/datalake/gold/athena-metadata/",
+        )
+        region = os.getenv("SIMILARITY_ATHENA_REGION", "us-east-2")
+
+        # F1 + F11: parameterized query with explicit column list (NO f-string, NO SELECT *)
+        sql = """
+            SELECT idolbuser, createdat, statuswarning, metadata, transactionid
+            FROM dlh_silver_safe_alpha.safetransactionresults
+            WHERE idolbuser = %(user)s
+              AND createdat >= %(window_start)s
+              AND createdat <= %(window_end)s
+              AND statuswarning IN ('SAFE', 'RISKY')
+        """
+        params = {
+            "user": idolbuser_int,          # int cast as defense-in-depth
+            "window_start": start,           # datetime object
+            "window_end": end,               # datetime object
+        }
+
+        def _run_query():
+            conn = connect(s3_staging_dir=s3_staging, region_name=region)
+            cursor = conn.cursor()
+            cursor.execute(sql, params)
+            rows = cursor.fetchall()
+            desc = cursor.description
+            conn.close()
+            return rows, desc
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_run_query)
+            try:
+                rows, desc = future.result(timeout=timeout_seconds)
+            except concurrent.futures.TimeoutError:
+                raise TimeoutError(f"Athena query exceeded {timeout_seconds}s timeout")
+
+        df = pd.DataFrame(rows, columns=[d[0] for d in desc])
+        df = _normalize_athena_columns(df)
+
+        # F5+ zero-rows path (normal Scenario 3 — user has no history)
+        if len(df) == 0:
+            logger.info(
+                "similarity.no_history",
+                extra={
+                    "idolbuser_hash": _hash_idolbuser(idolbuser_int),
+                    "window_months": window_months,
+                    "rows": 0,
+                },
+            )
+            return (None, None, None, None)
+
+        # Extract feature vectors (reuse same loop as load_reference_data_from_s3)
+        result = _extract_vectors_from_df(df)
+        if result[1] is None:
+            return (None, None, None, None)
+
+        _ATHENA_CACHE[cache_key] = result
+        return result
+
+    except Exception as exc:
+        logger.warning(
+            "similarity.athena_failure",
+            extra={
+                "idolbuser_hash": _hash_idolbuser(idolbuser_int) if "idolbuser_int" in dir() else _hash_idolbuser(idolbuser),
+                "exception_class": exc.__class__.__name__,
+                "exception_message": str(exc)[:200],
+                "category": classify_exception(exc),
+            },
+        )
+        return (None, None, None, None)
 
 
 def _count_parquet_files_in_s3(s3_client, bucket: str, prefix: str) -> int:
@@ -153,7 +356,7 @@ def _load_parquet_directory_from_s3(s3_client, bucket: str, prefix: str) -> pd.D
             continue
     
     if not dfs:
-        raise ValueError(f"Failed to read any parquet files from s3://{bucket}/{prefix}")
+        raise ValueError(f"Failed to read any parquet files from s3://{bucket}/{prefix}")  # noqa: F1-no-fstring-sql
     
     # Concatenate all dataframes
     df_combined = pd.concat(dfs, ignore_index=True)
@@ -201,14 +404,14 @@ def _load_from_local_csv(csv_path: str) -> Tuple[pd.DataFrame, np.ndarray, np.nd
     
     # Check cache
     if csv_path in _REFERENCE_CACHE:
-        logger.info(f"[SIMILARITY] Using cached data from {csv_path}")
+        logger.info(f"[SIMILARITY] Using cached data from {csv_path}")  # noqa: F1-no-fstring-sql
         return _REFERENCE_CACHE[csv_path]['data']
     
-    logger.info(f"[SIMILARITY] Loading reference data from local file: {csv_path}")
+    logger.info(f"[SIMILARITY] Loading reference data from local file: {csv_path}")  # noqa: F1-no-fstring-sql
     
     # Load CSV
     df = pd.read_csv(csv_path)
-    logger.info(f"[SIMILARITY] Loaded {len(df)} records from local file")
+    logger.info(f"[SIMILARITY] Loaded {len(df)} records from local file")  # noqa: F1-no-fstring-sql
     
     # Process same as S3 version
     feature_vectors = []
@@ -383,20 +586,20 @@ def load_reference_data_from_s3(
             return cached_data  # Returns tuple of (df, vectors, labels, ids)
         
         # Reload data from S3
-        logger.info(f"[SIMILARITY] Loading reference data from s3://{bucket}/{key}")
+        logger.info(f"[SIMILARITY] Loading reference data from s3://{bucket}/{key}")  # noqa: F1-no-fstring-sql
         if key.endswith('.csv'):
             # CSV file
-            logger.info(f"[SIMILARITY] Loading CSV from s3://{bucket}/{key}")
+            logger.info(f"[SIMILARITY] Loading CSV from s3://{bucket}/{key}")  # noqa: F1-no-fstring-sql
             df = _load_csv_from_s3(s3_client, bucket, key)
             
         elif key.endswith('.parquet'):
             # Single parquet file
-            logger.info(f"[SIMILARITY] Loading single parquet from s3://{bucket}/{key}")
+            logger.info(f"[SIMILARITY] Loading single parquet from s3://{bucket}/{key}")  # noqa: F1-no-fstring-sql
             df = _load_parquet_from_s3(s3_client, bucket, key)
             
         elif key.endswith('/'):
             # Parquet directory - read all parquet files
-            logger.info(f"[SIMILARITY] Loading parquet directory from s3://{bucket}/{key}")
+            logger.info(f"[SIMILARITY] Loading parquet directory from s3://{bucket}/{key}")  # noqa: F1-no-fstring-sql
             df = _load_parquet_directory_from_s3(s3_client, bucket, key)
             
         else:
@@ -518,8 +721,8 @@ def load_reference_data_from_s3(
         
         if len(vectors) == 0:
             logger.warning(
-                f"[SIMILARITY] No valid feature vectors extracted from reference data. "
-                f"Total rows: {total_rows}, all records were skipped. "
+                f"[SIMILARITY] No valid feature vectors extracted from reference data. "  # noqa: F1-no-fstring-sql
+                f"Total rows: {total_rows}, all records were skipped. "  # noqa: F1-no-fstring-sql
                 f"Reasons: {skip_reasons}. "
                 f"Similarity matching will be DISABLED."
             )
@@ -562,7 +765,7 @@ def load_reference_data_from_s3(
     
     except Exception as e:
         logger.error(
-            f"[SIMILARITY] Error loading reference data from {bucket}/{key}: {e}. "
+            f"[SIMILARITY] Error loading reference data from {bucket}/{key}: {e}. "  # noqa: F1-no-fstring-sql
             f"Similarity matching will be DISABLED. Endpoint will continue processing with K-means only."
         )
         # Return None to signal graceful degradation
@@ -713,7 +916,7 @@ def find_similar_transaction(
         # Load reference data
         if local_csv_path:
             # Load from local file for testing
-            logger.info(f"[SIMILARITY] Loading reference data from local file: {local_csv_path}")
+            logger.info(f"[SIMILARITY] Loading reference data from local file: {local_csv_path}")  # noqa: F1-no-fstring-sql
             ref_df, ref_vectors, ref_labels, ref_ids = _load_from_local_csv(local_csv_path)
             source_uri = f"file://{local_csv_path}"
         else:
