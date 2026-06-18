@@ -1,117 +1,151 @@
 # SAFE ML Transactions Endpoint
 
-## Descripción General
+Risk scoring and fraud detection endpoint for credit union transactions using K-Means clustering, exact field similarity matching, and statistical rules.
 
-Este proyecto implementa un **endpoint de predicción en Amazon SageMaker** para detección de fraude en transacciones financieras. El sistema combina un modelo de clustering K-Means, matching de similitud con transacciones históricas etiquetadas y reglas estadísticas para evaluar el riesgo de cada transacción en tiempo real o por lotes.
+## Key Features
 
-### Características Principales
-
-- **Modelo de ML**: K-Means clustering para detectar patrones anómalos en transacciones
-- **Similarity Matching**: Comparación con transacciones históricas etiquetadas (SAFE/RISKY) almacenadas en S3
-- **Datos en Parquet**: Soporte para múltiples archivos Parquet con recarga automática
-- **Graceful Degradation**: El endpoint continúa funcionando sin similarity si no hay datos disponibles
-- **Dynamic Reload**: Detección automática de nuevos datos sin reiniciar el endpoint
-- **Sistema de Reglas**: Reglas estadísticas (v8) para evaluación de riesgo basada en comportamiento histórico
-- **Política Híbrida**: Combinación de clustering + similitud + reglas para decisiones más robustas
-- **Scoring en Tiempo Real**: Capacidad de procesar transacciones individuales o en lote
-- **Decisiones Multinivel**: Accept, User Auth, Admin Review, Reject
-- **Alta Disponibilidad**: Manejo robusto de errores sin downtime del endpoint
+- **K-Means Clustering** — Detect anomalous transaction patterns
+- **Exact Field Matching** — Compare 56 fields against historical Athena transactions (no normalization)
+- **Athena Integration** — Query 6-month transaction history with sliding window per transaction
+- **Statistical Rules v8** — Behavior-based fraud rules (12 rules) for risk evaluation
+- **Hybrid Policy** — Combine clustering + similarity + rules for robust decisions
+- **Graceful Degradation** — Continue operating if similarity data unavailable
+- **Dynamic Reload** — Detect updated data without endpoint restart
+- **Levels of Decision** — Accept, User Auth, Admin Review, Reject
+- **Real-time & Batch** — Process individual transactions or batches
+- **High Availability** — Robust error handling with no downtime
 
 ---
 
-## Arquitectura del Sistema
+## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Input: CSV/JSON                          │
-│             (Transacciones desde S3)                        │
-└────────────────────────┬────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────────┐
-│              SageMaker Endpoint                             │
-│         (ml.m5.large, SKLearn Framework)                    │
-│                                                             │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  1. Validación y Preprocesamiento                    │  │
-│  │     - Limpieza de datos                              │  │
-│  │     - Derivación de features temporales              │  │
-│  │     - Transformaciones numéricas/categóricas         │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                         │                                   │
-│                         ▼                                   │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  2. K-Means Clustering                               │  │
-│  │     - Asignación de cluster                          │  │
-│  │     - Cálculo de distancia al centroide             │  │
-│  │     - Extracción de features (num__ + cat__)         │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                         │                                   │
-│                         ▼                                   │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  3. Similarity Matching (NEW!)                      │  │
-│  │     - Comparación con histórico en S3                │  │
-│  │     - Validación de esquema flexible                 │  │
-│  │     - Cálculo de similitud (cosine)                  │  │
-│  │     - Override si similitud >= threshold (0.90)      │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                         │                                   │
-│                         ▼                                   │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  4. Sistema de Reglas Estadísticas (v8)            │  │
-│  │     - Evaluación de 12 reglas de fraude             │  │
-│  │     - Scoring normalizado (0-100)                    │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                         │                                   │
-│                         ▼                                   │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  5. Política Híbrida y Decisión Final              │  │
-│  │     - Combinación: cluster + similitud + reglas      │  │
-│  │     - Clasificación de riesgo                        │  │
-│  │     - Generación de explicaciones                    │  │
-│  └──────────────────────────────────────────────────────┘  │
-└────────────────────────┬────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────────┐
-│                Output: JSON/CSV                              │
-│  - Cluster, Distancia, Risk Score, Decisión                 │
-│  - Features preprocesados                                    │
-│  - Información de similitud (matched, score, status)         │
-│  - Explicaciones y recomendaciones UX                        │
-└─────────────────────────────────────────────────────────────┘
+Input: CSV/JSON
+   ↓
+┌─ SageMaker Endpoint (ml.m5.large, SKLearn 1.2-1)
+│
+├─ 1. Validation & Preprocessing
+│    - Data type conversion
+│    - Temporal features (hour_sin, hour_cos, day_of_week, etc.)
+│    - Feature normalization
+│
+├─ 2. K-Means Clustering
+│    - Cluster assignment
+│    - Distance to centroid
+│    - Feature extraction (num__ + cat__ fields)
+│
+├─ 3. Exact Field Matching (56 fields)
+│    - Query Athena for 6-month transaction history
+│    - Compare fields WITHOUT transformation
+│    - Score = % of exact matches (0.0-1.0)
+│    - Return best match if score ≥ 0.90
+│
+├─ 4. Statistical Rules v8
+│    - 12 fraud detection rules
+│    - Risk score (0-100)
+│
+└─ 5. Hybrid Policy & Decision
+    - Combine: cluster + similarity + rules
+    - Final decision: Accept / User Auth / Admin Review / Reject
+       ↓
+Output: JSON/CSV with:
+- Cluster ID, Distance, Risk Score
+- Similarity match (txn_id, score, status)
+- Decision and explanations
 ```
 
 ---
 
-## Contenido del Repositorio
-
-### Estructura de Archivos
+## Repository Structure
 
 ```
 safe_txns_sim_endpoint/
 │
-├── README.md                          # Este archivo
-├── safe-txn-enpoint.ipynb            # Notebook principal para deploy y pruebas
+├── README.md                              # This file
+├── CLAUDE.md                              # Project context for AI agents
+├── safe-txn-enpoint.ipynb                 # SageMaker notebook (deploy & test)
 │
-├── endpoint/
-│   ├── inference_rules.py            # Script principal de inferencia para SageMaker
-│   ├── similarity_matcher.py         # Motor de matching de similitud
-│   ├── schema_validator.py           # Validación de esquema de features
-│   └── statistical_rules.py          # Sistema de reglas estadísticas v8
+├── endpoint/                              # SageMaker container code
+│   ├── inference_rules.py                 # Main inference entry point
+│   ├── similarity_matcher.py              # Exact field matching (56 fields)
+│   ├── schema_validator.py                # Feature schema validation
+│   ├── statistical_rules.py               # Risk rules v8
+│   ├── requirements.txt                   # Python dependencies
+│   └── CLAUDE.md                          # Module context
 │
-├── test/
-│   ├── test_e2e_with_s3.py          # Test end-to-end con datos reales de S3
-│   ├── test_inference_integration.py # Tests de integración
-│   └── test_local_integration.py     # Tests locales
+├── tests/                                 # Test suite
+│   ├── conftest.py                        # pytest configuration
+│   ├── test_exact_matching.py             # Exact matching logic tests
+│   ├── README.md                          # Testing guide
+│   │
+│   ├── similarity/                        # Similarity matching tests
+│   │   ├── test_athena_similarity_window.py
+│   │   ├── test_athena_similarity_input_contract.py
+│   │   ├── test_athena_similarity_sql_parametrized.py
+│   │   ├── test_athena_similarity_logging.py
+│   │   ├── test_athena_similarity_fallback.py
+│   │   ├── test_similarity_fields.py
+│   │   └── test_parquet_similarity.py
+│   │
+│   ├── endpoint/                          # Endpoint code tests
+│   │   ├── test_inference_integration.py
+│   │   ├── test_graceful_degradation.py
+│   │   └── test_dynamic_reload.py
+│   │
+│   ├── integration/                       # End-to-end tests
+│   │   ├── test_local_integration.py
+│   │   └── test_e2e_with_s3.py
+│   │
+│   └── utils/                             # Test utilities
+│       ├── process_endpoint.py
+│       ├── transform_similarity.py
+│       ├── verify_similarity_changes.py
+│       └── upload_to_s3.py
 │
-├── data/
-│   └── transactions_test.csv         # Datos de prueba
+├── deploy/                                # Deployment scripts
+│   ├── deploy_final.py                    # Deploy with code tarball
+│   ├── deploy_similarity_endpoint.py      # Full deployment pipeline
+│   ├── deploy_with_sdk.py                 # Simple SDK deployment
+│   ├── deploy_notebook.py                 # Extract from notebook
+│   └── CLAUDE.md                          # Module context
 │
-└── docs/
-    ├── CHANGELOG.md                  # Historial de cambios
-    ├── DATA_PREPARATION.md           # Guía de preparación de datos
-    └── SIMILARITY_INTEGRATION.md     # Documentación de similarity matching
+├── data/                                  # Test data
+│   ├── test_escenarios.csv                # Test transactions
+│   └── data_eng/                          # Data engineering reports
+│       ├── ALPHA_EXTRACTION_REPORT.md
+│       └── COMPARISON_REPORT.md
+│
+├── docs/                                  # Documentation
+│   ├── README.md                          # Docs index
+│   ├── codemap/                           # Auto-generated architecture map
+│   │   ├── 00-overview/                   # System overview
+│   │   ├── 01-endpoint/                   # Endpoint module docs
+│   │   ├── 02-deploy/                     # Deployment docs
+│   │   ├── 03-test/                       # Testing docs
+│   │   └── 04-data-eng/                   # Data engineering docs
+│   │
+│   ├── guides/                            # User guides
+│   │   ├── EXACT_MATCHING.md              # Exact field matching guide
+│   │   ├── ENDPOINT_INVOCATION.md         # How to call the endpoint
+│   │   ├── ATHENA_INTEGRATION.md          # Athena integration guide
+│   │   └── LOCAL_TESTING.md               # Local testing guide
+│   │
+│   └── references/                        # Technical references
+│       ├── ENDPOINT_INPUT_FORMAT.md       # Input CSV format
+│       ├── ENDPOINT_PROCESSING.md         # Processing flow
+│       ├── K_MEANS_PIPELINE.md            # K-Means clustering
+│       ├── GRACEFUL_DEGRADATION.md        # Error handling
+│       ├── STATISTICAL_RULES.md           # Rules v8 reference
+│       └── CHANGELOG.md                   # Version history
+│
+├── .gitignore
+├── .worktrees/                            # Git worktrees (per ticket)
+└── changes/                               # SDD artifacts (per ticket)
+    └── DATA-1264/                         # Current ticket artifacts
+        ├── plan.md
+        ├── spec.md
+        ├── testing-report.md
+        └── threats.md
 ```
 
 ### Descripción de Scripts
