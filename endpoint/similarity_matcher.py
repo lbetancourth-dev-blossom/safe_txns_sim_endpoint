@@ -77,64 +77,9 @@ except ImportError as e:
 
 DEFAULT_THRESHOLD = 0.90
 
-# 56 exact fields for similarity matching (no transformation, no normalization)
-EXACT_MATCH_FIELDS = [
-    # Numerical features (31)
-    'num__amount',
-    'num__is_night',
-    'num__hour_sin',
-    'num__hour_cos',
-    'num__day_of_week_cos',
-    'num__count_all_txn_last_5m',
-    'num__total_amount_all_txn_last_5m',
-    'num__count_txn_to_recipient_account_last_5m',
-    'num__total_amount_txn_to_recipient_account_last_5m',
-    'num__count_txn_to_recipient_account_in_last_2_months',
-    'num__is_first_txn_from_this_olb_user_to_this_recipient_account_q_6h',
-    'num__amount_coef_var_lst6m',
-    'num__pct_txns_under_100_lst6m',
-    'num__pct_txns_over_1k_lst6m',
-    'num__user_avg_amount_txn_per_active_day_last_6_months',
-    'num__count_user_all_txn_in_last_6_months',
-    'num__count_user_cancelled_txn_in_last_week',
-    'num__count_user_cancelled_txn_in_last_month',
-    'num__count_user_potential_fraud_txn_in_last_2_months',
-    'num__recency_user_created_days',
-    'num__count_suspected_actions_in_current_session',
-    'num__total_actions_session',
-    'num__is_auth_email_session',
-    'num__is_auth_phone_session',
-    'num__total_accounts',
-    'num__user_age',
-    'num__is_amount_greater_than_cu_p95_amount_ach_txn_in_last_6_months',
-    'num__txn_amount_vs_cu_avg_amount_ach_txn_in_last_6_months',
-    'num__is_batch',
-    'num__amt_vs_user_ach_avg_day',
-    'num__ach_count_share_6m',
-    # Categorical features (18)
-    'cat__TransactionProcessingType_Intime',
-    'cat__TransactionProcessingType_Intime_From_Recurrent',
-    'cat__TransactionProcessingType_Recurrent',
-    'cat__TransactionProcessingType_Schedule',
-    'cat__TransactionOrigin_External Internal',
-    'cat__TransactionOrigin_Internal External',
-    'cat__TransactionOrigin_M2m External',
-    'cat__TransactionCategory_SEND_MONEY_ACH',
-    'cat__TransactionCategory_SEND_MONEY_BATCH_PAYMENT_ACH',
-    'cat__TransactionCategory_SEND_MONEY_PAYROLL_ACH',
-    'cat__TransactionCategory_SINGLE_COLLECTION_ACH',
-    'cat__TransactionCategory_TRANSFER_EXTERNAL_TO_LOAN_ACH',
-    'cat__TransactionCategory_TRANSFER_INTERNAL_EXTERNAL_ACH',
-    'cat__user_type_mixed',
-    'cat__user_type_personal',
-    'cat__access_DESKTOP',
-    'cat__access_MOBILE',
-    'cat__access_missing',
-]
-
-# Global cache for reference data (keyed by s3_uri or local path)
-# Cache structure: {cache_key: {'data': (df, vectors, labels, ids), 'file_count': int}}
-_REFERENCE_CACHE = {}
+# Single source of truth: field list lives in schema_validator.py
+# EXACT_MATCH_FIELDS is derived at import time — no duplication
+EXACT_MATCH_FIELDS = EXPECTED_NUM_FEATURES + EXPECTED_CAT_FEATURES
 
 # Athena cache: keyed by "athena:{idolbuser_int}:{end_minute_str}"
 _ATHENA_CACHE: Dict[str, Any] = {}
@@ -454,111 +399,6 @@ def _extract_vectors_from_df(
 # Data Loading
 # =========================
 
-def _load_from_local_csv(csv_path: str) -> Tuple[pd.DataFrame, np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Load reference data from local CSV file (for testing).
-    
-    Args:
-        csv_path: Path to local CSV file
-    
-    Returns:
-        Tuple of (DataFrame, feature_vectors, labels, transaction_ids)
-    """
-    global _REFERENCE_CACHE
-    
-    # Check cache
-    if csv_path in _REFERENCE_CACHE:
-        logger.info(f"[SIMILARITY] Using cached data from {csv_path}")  # noqa: F1-no-fstring-sql
-        return _REFERENCE_CACHE[csv_path]['data']
-    
-    logger.info(f"[SIMILARITY] Loading reference data from local file: {csv_path}")  # noqa: F1-no-fstring-sql
-    
-    # Load CSV
-    df = pd.read_csv(csv_path)
-    logger.info(f"[SIMILARITY] Loaded {len(df)} records from local file")  # noqa: F1-no-fstring-sql
-    
-    # Process same as S3 version
-    feature_vectors = []
-    labels = []
-    transaction_ids = []
-    
-    skip_reasons = {
-        "parse_error": 0,
-        "missing_metadata": 0,
-        "missing_decisionResult": 0,
-        "schema_invalid": 0,
-        "feature_extraction_failed": 0
-    }
-    
-    for idx, row in df.iterrows():
-        # Extract metadata
-        metadata_str = row.get("metadata", "{}")
-        if pd.isna(metadata_str):
-            skip_reasons["missing_metadata"] += 1
-            continue
-        
-        try:
-            metadata = json.loads(metadata_str) if isinstance(metadata_str, str) else metadata_str
-        except (json.JSONDecodeError, TypeError) as e:
-            skip_reasons["parse_error"] += 1
-            continue
-        
-        # Extract decisionResult
-        decision_result = metadata.get("decisionResult")
-        if not decision_result:
-            skip_reasons["missing_decisionResult"] += 1
-            continue
-        
-        # Validate schema - ONLY check num__ and cat__ features
-        # Use flexible validation to allow partial schema matches
-        if HAS_SCHEMA_VALIDATOR:
-            is_valid = validate_features_only(decision_result, require_all=False)
-            if not is_valid:
-                skip_reasons["schema_invalid"] += 1
-                continue
-        
-        # Extract feature vector
-        feature_vector = _extract_feature_vector(decision_result)
-        if feature_vector is None:
-            skip_reasons["feature_extraction_failed"] += 1
-            continue
-        
-        # Extract label and transaction ID
-        label = row.get("statusWarning", "NONE")
-        txn_id = row.get("TransactionID") or row.get("transactionId") or row.get("transaction_id") or row.get("id") or f"txn_{idx}"
-        
-        feature_vectors.append(feature_vector)
-        labels.append(label)
-        transaction_ids.append(txn_id)
-    
-    # Log skip statistics
-    total_skipped = sum(skip_reasons.values())
-    if total_skipped > 0:
-        logger.warning(f"[SIMILARITY] Skipped {total_skipped}/{len(df)} records:")
-        for reason, count in skip_reasons.items():
-            if count > 0:
-                logger.warning(f"[SIMILARITY]   - {reason}: {count}")
-    
-    if len(feature_vectors) == 0:
-        raise ValueError("No valid reference data found in local CSV")
-    
-    # Convert to numpy arrays
-    feature_matrix = np.array(feature_vectors)
-    label_array = np.array(labels)
-    id_array = np.array(transaction_ids)
-    
-    logger.info(f"[SIMILARITY] Successfully loaded {len(feature_vectors)} valid records")
-    logger.info(f"[SIMILARITY] Feature vector shape: {feature_matrix.shape}")
-    
-    # Cache the result (CSV files don't track file count)
-    _REFERENCE_CACHE[csv_path] = {
-        'data': (df, feature_matrix, label_array, id_array),
-        'file_count': 0
-    }
-    
-    return df, feature_matrix, label_array, id_array
-
-
 
 
 def _extract_feature_vector(decision_result: Dict[str, Any]) -> Optional[np.ndarray]:
@@ -775,16 +615,11 @@ def _calculate_exact_field_match(
 def find_similar_transaction(
     query_result: Dict[str, Any],
     threshold: float = DEFAULT_THRESHOLD,
-    metric: str = "cosine",
     top_k: int = 1,
     idolbuser: Optional[int] = None,
     window_months: int = 6,
     timeout_seconds: int = 10,
     transaction_datetime: Optional[datetime] = None,
-    s3_bucket: Optional[str] = None,
-    s3_key: Optional[str] = None,
-    s3_uri: Optional[str] = None,
-    local_csv_path: Optional[str] = None,
     force_reload: bool = False
 ) -> Dict[str, Any]:
     """
@@ -793,33 +628,23 @@ def find_similar_transaction(
     Args:
         query_result: Dictionary containing transaction decisionResult fields
         threshold: Minimum similarity score to consider a match (0.0-1.0)
-        metric: Similarity metric to use ("cosine" or "euclidean")
         top_k: Number of top matches to consider
-        idolbuser: Athena query filter — transaction user ID
+        idolbuser: Athena query filter — transaction user ID (required)
         window_months: Sliding window size in months (default 6)
         timeout_seconds: Athena query timeout (default 10)
-        s3_bucket: S3 bucket name (optional, overrides default)
-        s3_key: S3 key path (optional, overrides default)
-        s3_uri: Full S3 URI (optional, takes precedence over bucket/key)
-        local_csv_path: Path to local CSV file for testing (bypasses S3)
-        force_reload: Force reload reference data from S3
+        transaction_datetime: Reference datetime for sliding window (defaults to now)
+        force_reload: Force reload reference data from Athena
 
     Returns:
         Dictionary with keys:
-        - matched: bool, whether a match was found above threshold
-        - similarity_score: float, similarity score of best match
-        - status_warning: str, label from matched transaction or "NONE"
-        - top_matches: list of top k matches with scores and labels
-        - s3_source: str, S3 URI used for reference data
+        - sim_match_txn_id: transaction ID of best match (or None)
+        - sim_score: float, similarity score of best match (or None)
+        - sim_status: label from matched transaction (or None)
+        - sim_decision: "Accept" / "Reject" when above threshold, else None
     """
     try:
         # Load reference data
-        if local_csv_path:
-            # Load from local file for testing
-            logger.info(f"[SIMILARITY] Loading reference data from local file: {local_csv_path}")  # noqa: F1-no-fstring-sql
-            ref_df, ref_vectors, ref_labels, ref_ids = _load_from_local_csv(local_csv_path)
-            source_uri = f"file://{local_csv_path}"
-        elif idolbuser is not None:
+        if idolbuser is not None:
             # D2 CLOSED: Use Athena as the sole source when idolbuser provided
             logger.info(f"[SIMILARITY] Loading from Athena for idolbuser={idolbuser}")
             print(f"[SIMILARITY] Loading from Athena for idolbuser={idolbuser}")
@@ -854,32 +679,14 @@ def find_similar_transaction(
                     "sim_decision": None
                 }
         else:
-            # Load from S3 (legacy fallback)
-            ref_df, ref_vectors, ref_labels, ref_ids = load_reference_data_from_s3(
-                bucket=s3_bucket,
-                key=s3_key,
-                s3_uri=s3_uri,
-                force_reload=force_reload
-            )
-
-            # Check if data loading failed (returns None values)
-            if ref_vectors is None or ref_labels is None:
-                logger.warning("[SIMILARITY] No reference data available - similarity matching disabled")
-                return {
-                    "matched": False,
-                    "similarity_score": 0.0,
-                    "status_warning": "NONE",
-                    "top_matches": [],
-                    "error": "No reference data available"
-                }
-
-            # Determine source URI for logging
-            if s3_uri:
-                source_uri = s3_uri
-            else:
-                bucket_name = s3_bucket or os.getenv("SIMILARITY_S3_BUCKET", DEFAULT_S3_BUCKET)
-                key_name = s3_key or os.getenv("SIMILARITY_S3_KEY", DEFAULT_S3_KEY)
-                source_uri = f"s3://{bucket_name}/{key_name}"
+            logger.warning("[SIMILARITY] idolbuser is required for Athena lookup — no data source available")
+            return {
+                "sim_match_txn_id": None,
+                "sim_score": None,
+                "sim_status": None,
+                "sim_decision": None,
+                "error": "idolbuser required"
+            }
         
         # Extract exact 56 fields (no transformation, no normalization)
         query_fields = _extract_exact_fields(query_result, EXACT_MATCH_FIELDS)
@@ -933,46 +740,22 @@ def find_similar_transaction(
         # Check if above threshold
         matched = best_score >= threshold
 
-        # Determine return format based on Athena source
-        if idolbuser is not None:
-            # Athena source: always return best match info; sim_decision only when above threshold
-            if matched and best_label in ("SAFE", "RISKY"):
-                sim_decision = "Accept" if best_label == "SAFE" else "Reject"
-            else:
-                sim_decision = None
-            result = {
-                "sim_match_txn_id": best_txn_id,
-                "sim_score": best_score,
-                "sim_status": best_label,
-                "sim_decision": sim_decision,
-            }
-            logger.info(
-                f"[SIMILARITY] ATHENA: txn={best_txn_id}, score={best_score:.4f}, "
-                f"status={best_label}, decision={sim_decision or 'below_threshold'}, "
-                f"idolbuser={idolbuser}"
-            )
+        # Athena source: always return best match info; sim_decision only when above threshold
+        if matched and best_label in ("SAFE", "RISKY"):
+            sim_decision = "Accept" if best_label == "SAFE" else "Reject"
         else:
-            # S3/legacy source: return full result object
-            result = {
-                "matched": matched,
-                "matched_transaction_id": best_txn_id if matched else None,
-                "similarity_score": best_score,
-                "status_warning": best_label if matched else "NONE",
-                "top_matches": top_matches,
-                "threshold_used": threshold,
-                "metric_used": metric,
-                "reference_count": len(ref_vectors),
-                "s3_source": source_uri
-            }
-            if matched:
-                logger.info(
-                    f"[SIMILARITY] MATCH FOUND: score={best_score:.4f}, "
-                    f"label={best_label}, threshold={threshold}"
-                )
-            else:
-                logger.info(
-                    f"[SIMILARITY] No match: best_score={best_score:.4f} < threshold={threshold}"
-                )
+            sim_decision = None
+        result = {
+            "sim_match_txn_id": best_txn_id,
+            "sim_score": best_score,
+            "sim_status": best_label,
+            "sim_decision": sim_decision,
+        }
+        logger.info(
+            f"[SIMILARITY] ATHENA: txn={best_txn_id}, score={best_score:.4f}, "
+            f"status={best_label}, decision={sim_decision or 'below_threshold'}, "
+            f"idolbuser={idolbuser}"
+        )
 
         return result
     
@@ -991,40 +774,17 @@ def find_similar_transaction(
 # Cache Management
 # =========================
 
-def clear_cache(s3_uri: Optional[str] = None):
-    """
-    Clear the cached reference data.
-    
-    Args:
-        s3_uri: Specific S3 URI to clear from cache. If None, clears all cache.
-    """
-    global _REFERENCE_CACHE
-    
-    if s3_uri:
-        if s3_uri in _REFERENCE_CACHE:
-            del _REFERENCE_CACHE[s3_uri]
-            logger.info(f"[SIMILARITY] Cache cleared for {s3_uri}")
-        else:
-            logger.info(f"[SIMILARITY] No cache found for {s3_uri}")
-    else:
-        _REFERENCE_CACHE.clear()
-        logger.info("[SIMILARITY] All cache cleared")
+def clear_cache():
+    """Clear the Athena cache."""
+    _ATHENA_CACHE.clear()
+    logger.info("[SIMILARITY] Athena cache cleared")
 
 
 def get_cache_info() -> Dict[str, Any]:
-    """Get information about the current cache state."""
-    cache_details = {}
-    for uri, (df, vectors, labels, ids) in _REFERENCE_CACHE.items():
-        cache_details[uri] = {
-            "num_references": len(df),
-            "vector_shape": vectors.shape,
-            "num_labels": len(set(labels))
-        }
-    
+    """Get information about the current Athena cache state."""
     return {
-        "num_cached_sources": len(_REFERENCE_CACHE),
-        "cached_sources": list(_REFERENCE_CACHE.keys()),
-        "details": cache_details
+        "num_cached_sources": len(_ATHENA_CACHE),
+        "cached_sources": list(_ATHENA_CACHE.keys()),
     }
 
 
@@ -1061,76 +821,30 @@ def get_s3_config_from_env() -> Tuple[str, str]:
 
 if __name__ == "__main__":
     import argparse
-    
-    parser = argparse.ArgumentParser(description="Test similarity matching")
+
+    parser = argparse.ArgumentParser(description="Test similarity matching (Athena)")
     parser.add_argument("--threshold", type=float, default=0.90, help="Similarity threshold")
-    parser.add_argument("--metric", type=str, default="cosine", choices=["cosine", "euclidean"])
-    parser.add_argument("--s3-bucket", type=str, help="S3 bucket name (overrides default)")
-    parser.add_argument("--s3-key", type=str, help="S3 key path (overrides default)")
-    parser.add_argument("--s3-uri", type=str, help="Full S3 URI like s3://bucket/path/file.csv")
-    parser.add_argument("--force-reload", action="store_true", help="Force reload from S3")
+    parser.add_argument("--idolbuser", type=int, required=True, help="OLB user ID to query")
+    parser.add_argument("--force-reload", action="store_true", help="Force reload from Athena")
     args = parser.parse_args()
-    
-    # Test loading reference data
-    print("\n=== Loading Reference Data ===")
-    
-    # Determine S3 source
-    if args.s3_uri:
-        print(f"Using S3 URI: {args.s3_uri}")
-    elif args.s3_bucket or args.s3_key:
-        bucket = args.s3_bucket or DEFAULT_S3_BUCKET
-        key = args.s3_key or DEFAULT_S3_KEY
-        print(f"Using S3: s3://{bucket}/{key}")
-    else:
-        print(f"Using default: s3://{DEFAULT_S3_BUCKET}/{DEFAULT_S3_KEY}")
-    
+
+    print(f"\n=== Athena Similarity Test for idolbuser={args.idolbuser} ===")
+
     try:
-        df, vectors, labels, txn_ids = load_reference_data_from_s3(
-            bucket=args.s3_bucket,
-            key=args.s3_key,
-            s3_uri=args.s3_uri,
+        df, vectors, labels, txn_ids = load_reference_data_from_athena(
+            idolbuser=args.idolbuser,
             force_reload=args.force_reload
         )
-        print(f"✓ Loaded {len(df)} transactions")
-        print(f"✓ Feature vector shape: {vectors.shape}")
-        print(f"✓ Unique labels: {set(labels)}")
-        
-        # Show cache info
-        cache_info = get_cache_info()
-        print(f"\nCache Info: {cache_info}")
-        
-        # Test with a sample from the reference data
-        if len(df) > 0:
-            print("\n=== Testing Similarity Matching ===")
-            
-            # Get first transaction as test query
-            sample_metadata = json.loads(df.iloc[0]["metadata"])
-            sample_result = sample_metadata.get("decisionResult", {})
-            
-            print(f"Query transaction: {df.iloc[0].get('TransactionID', 'N/A')}")
-            print(f"True label: {df.iloc[0]['statusWarning']}")
-            
-            # Find similar
-            match_result = find_similar_transaction(
-                sample_result,
-                threshold=args.threshold,
-                metric=args.metric,
-                s3_bucket=args.s3_bucket,
-                s3_key=args.s3_key,
-                s3_uri=args.s3_uri
-            )
-            
-            print(f"\nMatch Result:")
-            print(f"  Matched: {match_result['matched']}")
-            print(f"  Similarity Score: {match_result['similarity_score']:.4f}")
-            print(f"  Status Warning: {match_result['status_warning']}")
-            print(f"  Top 3 matches:")
-            for i, m in enumerate(match_result.get('top_matches', [])[:3], 1):
-                print(f"    {i}. TxnID: {m['TransactionID']}, Score: {m['similarity_score']:.4f}, Label: {m['status_warning']}")
-        
-        print("\n✓ Test completed successfully")
-    
+        if vectors is not None:
+            print(f"Loaded {len(df)} transactions from Athena")
+            print(f"Unique labels: {set(labels)}")
+        else:
+            print("No data returned from Athena.")
+
+        print("\nCache Info:", get_cache_info())
+        print("\nTest completed successfully")
+
     except Exception as e:
-        print(f"\n✗ Error: {e}")
+        print(f"\nError: {e}")
         import traceback
         traceback.print_exc()
