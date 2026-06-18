@@ -295,14 +295,14 @@ def load_reference_data_from_athena(
             SELECT idolbuser, createdat, statuswarning, metadata, transactionid
             FROM dlh_silver_safe_alpha.safetransactionresults
             WHERE idolbuser = %(user)s
-              AND CAST(createdat AS DATE) >= %(window_start_date)s
-              AND CAST(createdat AS DATE) <= %(window_end_date)s
+              AND CAST(createdat AS DATE) >= CAST(%(window_start_date)s AS DATE)
+              AND CAST(createdat AS DATE) <= CAST(%(window_end_date)s AS DATE)
               AND statuswarning IN ('SAFE', 'RISKY')
         """
         params = {
             "user": idolbuser_int,
-            "window_start_date": start.date(),  # YYYY-MM-DD only (no time)
-            "window_end_date": end.date(),      # YYYY-MM-DD only (no time)
+            "window_start_date": start.date().isoformat(),  # YYYY-MM-DD string
+            "window_end_date": end.date().isoformat(),      # YYYY-MM-DD string
         }
 
         def _run_query():
