@@ -23,11 +23,16 @@ CODE_FILES = [
     "endpoint/requirements.txt",
 ]
 
-# Model artifacts from S3
+# Model artifacts from S3 (required for model_fn to work)
 MODEL_ARTIFACTS = {
+    # K-Means model files
     "kmeans_model.joblib": "safe_txns/kmeans/kmeans_analysis/V2/artifact/kmeans_model.joblib",
-    "preprocessing_pipeline.joblib": "safe_txns/preprocessing/NOVEMBER/preprocessing_pipeline.joblib",
+    "kmeans_artifacts.json": "safe_txns/kmeans/kmeans_analysis/V2/artifact/kmeans_artifacts.json",
     "centroids.csv": "safe_txns/kmeans/centroids/V2/centroids.csv",
+
+    # Feature processing
+    "preprocessing_pipeline.joblib": "safe_txns/preprocessing/NOVEMBER/preprocessing_pipeline.joblib",
+    "selected_features.csv": "safe_txns/feature_selection/NOVEMBER/selected_features.csv",
 }
 
 print("=" * 80)
