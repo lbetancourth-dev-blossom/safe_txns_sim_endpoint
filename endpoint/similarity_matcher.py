@@ -276,7 +276,9 @@ def load_reference_data_from_athena(
 
     # Compute sliding window relative to transaction date
     start, end = _compute_sliding_window(window_months, reference_dt=transaction_datetime)
-    cache_key = f"athena:{idolbuser_int}:{end.strftime('%Y-%m-%d-%H-%M')}"
+    # Key by (user, date) — not minute. All txns for the same user on the same day
+    # share a single Athena query (6-month window shifts < 1 day between same-day txns).
+    cache_key = f"athena:{idolbuser_int}:{end.strftime('%Y-%m-%d')}"
 
     if not force_reload and cache_key in _ATHENA_CACHE:
         logger.info(f"[SIMILARITY][ATHENA] Cache hit for {cache_key}")
