@@ -56,10 +56,10 @@ s3://blossom-analytics-safe-dev-nv/output/kmeans-endpoint-v2-fixes/model.tar.gz
    )
 
    # Option A: update existing endpoint (recommended if endpoint already exists)
-   endpoint_name = "data-safe-txns-endpoint"
+   endpoint_name = "SAFE_TXNS_ENDPOINT_DEV"
 
    # Option B: create a new endpoint with a versioned name
-   # endpoint_name = "data-safe-txns-v2"
+   # endpoint_name = "SAFE_TXNS_ENDPOINT_DEV"
 
    predictor = sk_model.deploy(
        initial_instance_count=1,
@@ -88,15 +88,15 @@ s3://blossom-analytics-safe-dev-nv/output/kmeans-endpoint-v2-fixes/model.tar.gz
 
 | Name | When to use |
 |------|-------------|
-| `data-safe-txns-endpoint` | Existing endpoint — update in-place. Zero downtime if config update is supported. |
-| `data-safe-txns-v2` | New endpoint for side-by-side testing before cutting over. |
+| `SAFE_TXNS_ENDPOINT_DEV` | Existing endpoint — update in-place. Zero downtime if config update is supported. |
+| `SAFE_TXNS_ENDPOINT_DEV` | New endpoint for side-by-side testing before cutting over. |
 
 To delete the old endpoint after verifying the new one:
 
 ```python
 client = boto3.client("sagemaker")
-client.delete_endpoint(EndpointName="data-safe-txns-endpoint")
-client.delete_endpoint_config(EndpointConfigName="data-safe-txns-endpoint")
+client.delete_endpoint(EndpointName="SAFE_TXNS_ENDPOINT_DEV")
+client.delete_endpoint_config(EndpointConfigName="SAFE_TXNS_ENDPOINT_DEV")
 ```
 
 ---
@@ -138,7 +138,7 @@ python3 tests/process_endpoint.py \
 ### CloudWatch Logs
 
 ```bash
-aws logs tail /aws/sagemaker/Endpoints/data-safe-txns-endpoint --follow \
+aws logs tail /aws/sagemaker/Endpoints/SAFE_TXNS_ENDPOINT_DEV --follow \
   --region us-east-1
 ```
 
@@ -150,7 +150,7 @@ Look for:
 ### Console Verification
 
 1. AWS Console → SageMaker → Endpoints
-2. Find `data-safe-txns-endpoint`
+2. Find `SAFE_TXNS_ENDPOINT_DEV`
 3. Verify Status: `InService`
 
 ---
@@ -162,7 +162,7 @@ If deployment fails, the previous endpoint version remains active (SageMaker doe
 To force a rollback to a previous config:
 ```bash
 aws sagemaker update-endpoint \
-  --endpoint-name data-safe-txns-endpoint \
+  --endpoint-name SAFE_TXNS_ENDPOINT_DEV \
   --endpoint-config-name <previous-config-name> \
   --region us-east-1
 ```

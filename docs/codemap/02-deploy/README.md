@@ -14,7 +14,7 @@ last_commit: 2ac735d
 
 ## Purpose
 
-Scripts Python que empaquetan el código de [[01-endpoint/README]] + artefactos del modelo en un tarball y lo despliegan al endpoint SageMaker `data-safe-txns-endpoint`. Configura las env vars de Athena (cross-account dev→alpha).
+Scripts Python que empaquetan el código de [[01-endpoint/README]] + artefactos del modelo en un tarball y lo despliegan al endpoint SageMaker `SAFE_TXNS_ENDPOINT_DEV`. Configura las env vars de Athena (cross-account dev→alpha).
 
 ## Public surface
 

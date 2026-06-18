@@ -90,7 +90,7 @@ session = boto3.Session(profile_name='your-profile-name', region_name='us-east-1
 
 ### SageMaker Configuration
 
-**Endpoint Name**: `data-safe-txns-endpoint` (hardcoded)
+**Endpoint Name**: `SAFE_TXNS_ENDPOINT_DEV` (hardcoded)
 **Instance Type**: `ml.m5.large`
 **Framework**: SKLearn 1.2-1 (CPU)
 **Region**: us-east-1
@@ -125,10 +125,10 @@ To change, edit `BUCKET` and `MODEL_PREFIX` variables.
 → Check IAM role has S3 permissions (`s3:GetObject`, `s3:ListBucket`)
 
 ### "Endpoint creation failed"
-→ Check CloudWatch logs: AWS Console → CloudWatch → Log Groups → `/aws/sagemaker/Endpoints/data-safe-txns-endpoint`
+→ Check CloudWatch logs: AWS Console → CloudWatch → Log Groups → `/aws/sagemaker/Endpoints/SAFE_TXNS_ENDPOINT_DEV`
 
 ### "Timeout waiting for endpoint to be InService"
-→ Endpoint may still be updating. Check AWS Console → SageMaker → Endpoints → data-safe-txns-endpoint
+→ Endpoint may still be updating. Check AWS Console → SageMaker → Endpoints → SAFE_TXNS_ENDPOINT_DEV
 
 ---
 

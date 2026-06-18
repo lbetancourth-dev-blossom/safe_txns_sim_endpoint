@@ -8,7 +8,7 @@
 
 SageMaker ML endpoint para scoring de riesgo de transacciones financieras en credit unions. Combina K-Means clustering, reglas estadísticas v8 (R1–R12), y similarity matching contra historial Athena (ventana sliding 6 meses) para clasificar cada transacción como Accept / User Auth / Admin Review / Reject.
 
-El endpoint se despliega como SageMaker endpoint productivo `data-safe-txns-endpoint` (cuenta development, region us-east-1) y consume data del datalake Silver en cuenta alpha (region us-east-2) vía Athena cross-account.
+El endpoint se despliega como SageMaker endpoint productivo `SAFE_TXNS_ENDPOINT_DEV` (cuenta development, region us-east-1) y consume data del datalake Silver en cuenta alpha (region us-east-2) vía Athena cross-account.
 
 ## Tech stack
 

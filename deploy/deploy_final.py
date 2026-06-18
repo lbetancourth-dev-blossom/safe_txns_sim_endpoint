@@ -10,7 +10,7 @@ import time
 from datetime import datetime
 
 # Configuration
-ENDPOINT_NAME = "data-safe-txns-endpoint"
+ENDPOINT_NAME = "SAFE_TXNS_ENDPOINT_DEV"
 BUCKET = "blossom-analytics-safe-dev-nv"
 MODEL_PREFIX = "safe_txns/similarity/endpoint/v2"
 LOCAL_TAR = "model_with_exact_matching.tar.gz"

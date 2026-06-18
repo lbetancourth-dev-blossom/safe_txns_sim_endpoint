@@ -5,7 +5,7 @@ from sagemaker.sklearn.model import SKLearnModel
 # Configuration
 model_data = "s3://blossom-analytics-safe-dev-nv/output/kmeans-similarity-endpoint/model.tar.gz"
 role = "arn:aws:iam::436631265256:role/service-role/AmazonSageMaker-ExecutionRole-20241029T103557"
-endpoint_name = "safe-txn-similarity-endpoint"
+endpoint_name = "SAFE_TXNS_ENDPOINT_DEV"
 
 print("="*80)
 print("DEPLOYING ENDPOINT WITH SAGEMAKER SDK")

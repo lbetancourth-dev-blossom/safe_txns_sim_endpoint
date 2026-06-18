@@ -203,7 +203,7 @@ print(df)
 ### Step 2: Check CloudWatch Logs
 ```bash
 # See what the endpoint is logging
-aws logs tail /aws/sagemaker/Endpoints/data-safe-txns-endpoint --follow
+aws logs tail /aws/sagemaker/Endpoints/SAFE_TXNS_ENDPOINT_DEV --follow
 
 # Look for:
 # [SIMILARITY] Loading from Athena for idolbuser=597178

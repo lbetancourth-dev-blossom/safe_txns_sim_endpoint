@@ -14,7 +14,7 @@ last_commit: 2ac735d
 ```mermaid
 flowchart LR
     Caller[Caller<br/>e.g. OLB transaction service]
-    Endpoint[SageMaker Endpoint<br/>data-safe-txns-endpoint<br/>account: dev]
+    Endpoint[SageMaker Endpoint<br/>SAFE_TXNS_ENDPOINT_DEV<br/>account: dev]
     Athena[(Athena<br/>dlh_silver_safe_alpha<br/>account: alpha · us-east-2)]
     S3Silver[(S3 Silver<br/>safetransactionresults<br/>account: alpha)]
     S3Staging[(S3 Staging<br/>athena-metadata<br/>account: alpha)]
@@ -110,7 +110,7 @@ K-Means + Rules + Similarity son **procesos paralelos independientes** — ver [
 ## Deployment topology
 
 - **Dev (developer machine):** corre tests locales con `pytest tests/`, simulación con `tests/integration/test_local_integration.py`, invocación real con `tests/process_endpoint.py`.
-- **SageMaker (cuenta development):** endpoint productivo `data-safe-txns-endpoint`. Deploy via [[02-deploy/README]] scripts.
+- **SageMaker (cuenta development):** endpoint productivo `SAFE_TXNS_ENDPOINT_DEV`. Deploy via [[02-deploy/README]] scripts.
 - **Athena/Glue/S3 (cuenta alpha):** data lake compartido. El endpoint requiere permisos cross-account (`athena:*`, `s3:GetObject`, `glue:GetTable`, `glue:GetPartitions`).
 
 ## Cross-account IAM (riesgo top-level activo)

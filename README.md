@@ -176,7 +176,7 @@ safe_txns_sim_endpoint/
 
 **Versiones del Endpoint**:
 - **V2** (deprecated): `final-safe-txns-endpoint`
-- **V3** (actual): `data-safe-txns-endpoint`
+- **V3** (actual): `SAFE_TXNS_ENDPOINT_DEV`
 
 ---
 
@@ -332,7 +332,7 @@ payload = csv_buffer.getvalue()
 # Invocar endpoint
 runtime = boto3.client("sagemaker-runtime", region_name="us-east-1")
 response = runtime.invoke_endpoint(
-    EndpointName="data-safe-txns-endpoint",
+    EndpointName="SAFE_TXNS_ENDPOINT_DEV",
     ContentType="text/csv",
     Body=payload
 )
@@ -418,7 +418,7 @@ df_result = pd.DataFrame(predictions)
    predictor = sk_model.deploy(
        initial_instance_count=1,
        instance_type="ml.m5.large",
-       endpoint_name="data-safe-txns-endpoint"
+       endpoint_name="SAFE_TXNS_ENDPOINT_DEV"
    )
    ```
 
@@ -428,7 +428,7 @@ df_result = pd.DataFrame(predictions)
 import boto3
 
 sm = boto3.client("sagemaker")
-response = sm.describe_endpoint(EndpointName="data-safe-txns-endpoint")
+response = sm.describe_endpoint(EndpointName="SAFE_TXNS_ENDPOINT_DEV")
 print(f"Status: {response['EndpointStatus']}")
 
 # Debe mostrar: Status: InService
@@ -443,8 +443,8 @@ Para actualizar con un nuevo modelo:
 3. Eliminar endpoint anterior:
    ```python
    client = boto3.client("sagemaker")
-   client.delete_endpoint(EndpointName="data-safe-txns-endpoint")
-   client.delete_endpoint_config(EndpointConfigName="data-safe-txns-endpoint")
+   client.delete_endpoint(EndpointName="SAFE_TXNS_ENDPOINT_DEV")
+   client.delete_endpoint_config(EndpointConfigName="SAFE_TXNS_ENDPOINT_DEV")
    ```
 4. Hacer nuevo deploy con nuevo `model_data`
 
@@ -549,7 +549,7 @@ def classify_risk(score: int) -> str:
 ```python
 import boto3
 sm = boto3.client("sagemaker")
-response = sm.describe_endpoint(EndpointName="data-safe-txns-endpoint")
+response = sm.describe_endpoint(EndpointName="SAFE_TXNS_ENDPOINT_DEV")
 if "FailureReason" in response:
     print(response["FailureReason"])
 ```
@@ -623,7 +623,7 @@ Cuando el modelo K-Means necesite actualización:
 **Estrategia recomendada**:
 ```
 s3://bucket/output/kmeans-endpoint-vYYYYMMDD/model.tar.gz
-Endpoint name: data-safe-txns-endpoint-vYYYYMMDD
+Endpoint name: SAFE_TXNS_ENDPOINT_DEV-vYYYYMMDD
 ```
 
 Mantener registro de cambios entre versiones en este README.
@@ -654,7 +654,7 @@ Mantener registro de cambios entre versiones en este README.
 
 **Bucket S3**: `blossom-analytics-safe-dev-nv`  
 **Región**: `us-east-1`  
-**Endpoint actual**: `data-safe-txns-endpoint` (V3)
+**Endpoint actual**: `SAFE_TXNS_ENDPOINT_DEV` (V3)
 
 Para soporte técnico o reportar issues, contactar al equipo de ML Engineering.
 
@@ -667,5 +667,5 @@ Proyecto interno - Todos los derechos reservados.
 ---
 
 **Última actualización**: Abril 2026  
-**Versión del endpoint**: V3 (data-safe-txns-endpoint)  
+**Versión del endpoint**: V3 (SAFE_TXNS_ENDPOINT_DEV)  
 **Versión de reglas**: v8

@@ -7,7 +7,7 @@ Uso:
     
 El script:
 1. Lee transacciones desde wp_input.csv
-2. Las procesa en el endpoint data-safe-txns-endpoint
+2. Las procesa en el endpoint SAFE_TXNS_ENDPOINT_DEV
 3. Guarda resultados con metadata en wp_result.csv
 """
 
@@ -22,7 +22,7 @@ from typing import Dict, List, Any
 import time
 
 # Configuración
-ENDPOINT_NAME = "data-safe-txns-endpoint"
+ENDPOINT_NAME = "SAFE_TXNS_ENDPOINT_DEV"
 AWS_REGION = "us-east-1"  # Ajustar según tu región
 
 def invoke_endpoint(runtime_client, endpoint_name: str, batch_df: pd.DataFrame) -> Dict:

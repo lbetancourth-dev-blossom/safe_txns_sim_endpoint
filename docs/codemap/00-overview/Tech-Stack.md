@@ -38,7 +38,7 @@ last_commit: 2ac735d
 
 | Resource | Account | Region |
 |---|---|---|
-| Endpoint SageMaker `data-safe-txns-endpoint` | development | us-east-1 |
+| Endpoint SageMaker `SAFE_TXNS_ENDPOINT_DEV` | development | us-east-1 |
 | Glue catalog `dlh_silver_safe_alpha` | alpha | us-east-2 |
 | S3 Silver bucket `blossom-analytics-datalake-alpha` | alpha | us-east-2 |
 | S3 staging Athena bucket | alpha | us-east-2 |

@@ -31,7 +31,7 @@ Tests de integración (pytest) + scripts manuales para invocar el endpoint real 
 
 ```
 tests/
-├── process_endpoint.py                          — invoca data-safe-txns-endpoint via boto3 sagemaker-runtime
+├── process_endpoint.py                          — invoca SAFE_TXNS_ENDPOINT_DEV via boto3 sagemaker-runtime
 ├── transform_similarity.py                      — transforma output del endpoint a formato datalake
 ├── upload_to_s3.py                              — upload de reference data a S3
 ├── verify_similarity_changes.py                 — verifica behavior changes
@@ -60,13 +60,13 @@ tests/
 
 ### `process_endpoint.py` — invocación real del endpoint
 
-Reads CSV → batches a SageMaker `data-safe-txns-endpoint` → parses response → escribe CSV de salida con metadata JSON. Flags:
+Reads CSV → batches a SageMaker `SAFE_TXNS_ENDPOINT_DEV` → parses response → escribe CSV de salida con metadata JSON. Flags:
 
 | Flag | Default |
 |---|---|
 | `--input` | `data/wp_input.csv` |
 | `--output` | `data/wp_result.csv` |
-| `--endpoint` | `data-safe-txns-endpoint` |
+| `--endpoint` | `SAFE_TXNS_ENDPOINT_DEV` |
 | `--region` | `us-east-1` |
 | `--batch-size` | `10` |
 | `--profile` | (default SSO profile) |

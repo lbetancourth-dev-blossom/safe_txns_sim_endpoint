@@ -4,25 +4,24 @@
 
 ## Purpose
 
-Scripts para empaquetar `endpoint/*.py` + artefactos del modelo en `model.tar.gz`, subirlo a S3, y desplegarlo como SageMaker endpoint `data-safe-txns-endpoint`.
+Scripts para empaquetar `endpoint/*.py` + artefactos del modelo en `model.tar.gz`, subirlo a S3, y desplegarlo como SageMaker endpoint `SAFE_TXNS_ENDPOINT_DEV`.
 
 ## Where things live
 
 ```
 deploy/
-├── deploy_similarity_endpoint.py  — orquestación completa (207 líneas)
-├── deploy_with_sdk.py             — wrapper simple SageMaker SDK (51 líneas)
-└── deploy_notebook.py             — extract code from notebook (64 líneas)
+├── deploy_final.py    — full pipeline: S3 download → tar → upload → SageMaker deploy
+└── deploy_with_sdk.py — wrapper simple SageMaker SDK (use when tarball already in S3)
 ```
 
 ## Key files
 
-- `deploy_similarity_endpoint.py` — full pipeline. S3 download → tar → upload → SageMaker create/update.
+- `deploy_final.py` — full pipeline. S3 download → tar → upload → SageMaker create/update.
 - `deploy_with_sdk.py` — versión simple con `SKLearnModel`. Usa cuando ya tenés `model.tar.gz` listo en S3.
 
 ## Conventions
 
-- **Idempotent.** Si el endpoint existe, hace `update_endpoint`; si no, `create_endpoint`. Mismo nombre `data-safe-txns-endpoint`.
+- **Idempotent.** Si el endpoint existe, hace `update_endpoint`; si no, `create_endpoint`. Mismo nombre `SAFE_TXNS_ENDPOINT_DEV`.
 - **Waiter** de status post-deploy: 30s × 20 polls (~10 min) hasta `InService`.
 - **`source_dir="endpoint"`** en `SKLearnModel` para que SageMaker auto-instale `requirements.txt`.
 - **Env vars cross-account.** Inyecta `SIMILARITY_ATHENA_*` para apuntar a recursos de la cuenta alpha.
@@ -43,7 +42,7 @@ No hay test suite dedicado. Validación = corrida real + waiter de status. Para 
 
 - **Cross-account permissions.** Para que el endpoint pueda leer Athena en alpha, el rol en development DEBE tener policies adicionales. Si no las tiene, el deploy "funciona" pero el endpoint loguea `similarity.athena_failure` con `category=permission` en cada call.
 - **No usar `--no-verify` en commits del deploy.** Los hooks pueden detectar credenciales o configs sensibles.
-- **El nombre del endpoint es hardcoded** `data-safe-txns-endpoint`. Cambiar acá implica cambiar también `test/process_endpoint.py` y cualquier consumer.
+- **El nombre del endpoint es hardcoded** `SAFE_TXNS_ENDPOINT_DEV`. Cambiar acá implica cambiar también `test/process_endpoint.py` y cualquier consumer.
 - **Re-deploy NO retraina el modelo.** Solo reemplaza el código (`endpoint/*.py`) y el tarball. Los artifacts del K-Means se descargan de S3.
 - **El bucket de modelos es `blossom-analytics-safe-dev-nv`** (cuenta dev), distinto del datalake (`blossom-analytics-datalake-alpha`).
 

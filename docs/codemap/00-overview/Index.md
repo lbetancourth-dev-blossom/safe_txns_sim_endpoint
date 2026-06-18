@@ -15,7 +15,6 @@ Catálogo alfabético de todas las páginas del vault. Para el entry point narra
 
 | Page | One-liner |
 |---|---|
-| [[Agent-Memory]] | Qué archivos lee un agente IA y en qué orden |
 | [[Architecture]] | Diagrama del sistema, request flow, deployment topology |
 | [[Glossary]] | Términos del dominio (idOLBUserTxns, SAFE/RISKY, sim_score, etc.) |
 | [[Graceful-Degradation]] | Contrato D1: procesos paralelos independientes |
@@ -24,7 +23,6 @@ Catálogo alfabético de todas las páginas del vault. Para el entry point narra
 | [[Module-Map]] | Directorio → módulo |
 | [[README]] | MOC del codemap (entry point) |
 | [[SDD-Workflow]] | Ciclo SDD+TDD de Blossom |
-| [[Schema]] | Convenciones del vault (frontmatter, wiki-links, tags) |
 | [[Similarity-Athena]] | Cómo el endpoint consulta Athena con ventana sliding 6m |
 | [[Statistical-Rules]] | Reglas v8 R1–R12 con scoring piecewise |
 | [[Tech-Stack]] | Dependencias y versiones (pyathena, sklearn, etc.) |
@@ -41,12 +39,12 @@ Catálogo alfabético de todas las páginas del vault. Para el entry point narra
 
 ## File counts
 
-- Overview pages: 13
+- Overview pages: 11
 - Module pages: 5
-- **Total codemap pages:** 18
+- **Total codemap pages:** 16
 - **Per-module CLAUDE.md:** 4 (endpoint, deploy, test, data_eng)
 - **Root meta files:** 2 (CLAUDE.md, AGENTS.md)
-- **Grand total:** 24 archivos generados por `/blossom-codemap`
+- **Grand total:** 22 archivos generados por `/blossom-codemap`
 
 ## Legacy docs (no codemap, en `docs/` raíz)
 
