@@ -4,59 +4,59 @@
 
 ## Purpose
 
-Código que vive en el contenedor SageMaker. Orquesta K-Means + reglas + similitud Athena.
+Code that lives in the SageMaker container. Orchestrates K-Means + rules + Athena similarity.
 
 ## Where things live
 
 ```
 endpoint/
-├── inference_rules.py    — orquestador (model_fn, predict_fn, DTYPE_MAP, _validate_similarity_input)
+├── inference_rules.py    — orchestrator (model_fn, predict_fn, DTYPE_MAP, _validate_similarity_input)
 ├── similarity_matcher.py — Athena loader (find_similar_transaction, classify_exception, _hash_idolbuser)
-├── statistical_rules.py  — Reglas v8 (score_transaction_v8, classify_risk)
-├── schema_validator.py   — Validación schema (58 num__+cat__ features esperadas)
-├── validate_s3_data.py   — CLI offline para validar reference data
+├── statistical_rules.py  — Rules v8 (score_transaction_v8, classify_risk)
+├── schema_validator.py   — Schema validation (58 expected num__+cat__ features)
+├── validate_s3_data.py   — Offline CLI to validate reference data
 └── requirements.txt      — pyathena, python-dateutil, pyarrow, boto3
 ```
 
 ## Key files
 
-- `inference_rules.py` — ~1285 líneas. Función crítica: `predict_fn`. **No modificar el orden de stages** (K-means antes de reglas antes de similitud).
-- `similarity_matcher.py` — ~1100 líneas. La query Athena vive acá. **No usar f-string SQL** (test F1 lo enforza).
-- `statistical_rules.py` — 12 reglas v8. Cambios de peso o thresholds van acá.
-- `schema_validator.py` — Si agregás features, actualizá la lista esperada.
+- `inference_rules.py` — ~1285 lines. Critical function: `predict_fn`. **Do not modify the stage order** (K-means before rules before similarity).
+- `similarity_matcher.py` — ~1100 lines. The Athena query lives here. **Do not use f-string SQL** (F1 test enforces this).
+- `statistical_rules.py` — 12 v8 rules. Weight or threshold changes go here.
+- `schema_validator.py` — If you add features, update the expected list.
 
 ## Conventions
 
-- **Lazy imports** de `similarity_matcher` y `statistical_rules` via `importlib`. Disabled vía env vars.
-- **DTYPE_MAP cast** en `input_fn`. Si agregás columna, agregala al map.
-- **`_hash_idolbuser(value)`** para logs — NUNCA loguear `idOLBUser` en plaintext.
-- **`classify_exception(exc)`** para categorizar errores Athena. 5 categories.
-- **`_compute_sliding_window(months=6)`** dentro de cada `find_similar_transaction` call. NO en `model_fn()`.
+- **Lazy imports** of `similarity_matcher` and `statistical_rules` via `importlib`. Disabled via env vars.
+- **DTYPE_MAP cast** in `input_fn`. If you add a column, add it to the map.
+- **`_hash_idolbuser(value)`** for logs — NEVER log `idOLBUser` in plaintext.
+- **`classify_exception(exc)`** to categorize Athena errors. 5 categories.
+- **`_compute_sliding_window(months=6)`** inside each `find_similar_transaction` call. NOT in `model_fn()`.
 - **PyAthena parameterized queries** (`cursor.execute(sql, params)`). No f-string.
-- **On-demand Athena connection** — abrir/cerrar por call. No singleton.
+- **On-demand Athena connection** — open/close per call. No singleton.
 
 ## Dependencies
 
-- **Imports internos:** ninguno cross-file (todos los módulos son lazy-loaded)
+- **Internal imports:** none cross-file (all modules are lazy-loaded)
 - **External:** pyathena, python-dateutil, pyarrow, boto3
-- **Imported by:** scripts en `deploy/` (empaquetan estos 4 .py al tarball)
-- **Tested by:** `tests/test_*.py` (suite en módulo `tests/`) + `endpoint/test_csv_loading.py`
+- **Imported by:** scripts in `deploy/` (they package these 4 .py files into the tarball)
+- **Tested by:** `tests/test_*.py` (suite in `tests/` module) + `endpoint/test_csv_loading.py`
 
 ## Tests
 
-- Test embebido: `endpoint/test_csv_loading.py`
-- Suite externa: `pytest tests/similarity/test_athena_similarity_*.py tests/endpoint/test_graceful_degradation.py`
-- Cobertura: ~10 archivos de test, ~30+ test cases
+- Embedded test: `endpoint/test_csv_loading.py`
+- External suite: `pytest tests/similarity/test_athena_similarity_*.py tests/endpoint/test_graceful_degradation.py`
+- Coverage: ~10 test files, ~30+ test cases
 
 ## Gotchas
 
-- **K-means SIEMPRE corre.** Si pensás "le pongo un try/catch a todo el predict_fn", no — K-means + reglas + similitud son ramas paralelas independientes. Ver `docs/codemap/00-overview/Graceful-Degradation.md`.
-- **D1 graceful (idOLBUserTxns/createdAtTxns null):** NO retornar 400. Marcar row como `sim_skip`, `sim_*=null`, K-means igual produce score.
-- **El contenedor queda caliente días.** Cualquier cosa que dependa de `now()` debe calcularse en `predict_fn`, NUNCA en `model_fn()`.
-- **`idolbuser` (lowercase) en Athena, `idOLBUser` (CamelCase) en código Python.** `_normalize_athena_columns` mapea entre los dos.
-- **`SELECT` con columnas explícitas** (no `*`) en queries productivas. Incluye `metadata`.
-- **Casting de `idOLBUserTxns` a int:** el payload puede traer floats (`83772.0`). El `int()` cast + `pd.isnull()` antes maneja ambos casos.
-- **Tests cachean `_similarity_mod` y `HAS_SIMILARITY`.** Necesitás un `autouse` monkeypatch fixture que los resetee, sino los tests son order-dependent.
+- **K-means ALWAYS runs.** If you think "I'll wrap the whole predict_fn in a try/catch" — don't. K-means + rules + similarity are independent parallel branches. See `docs/codemap/00-overview/Graceful-Degradation.md`.
+- **D1 graceful (idOLBUserTxns/createdAtTxns null):** Do NOT return 400. Mark the row as `sim_skip`, `sim_*=null`; K-means still produces a score.
+- **The container stays warm for days.** Anything that depends on `now()` must be computed in `predict_fn`, NEVER in `model_fn()`.
+- **`idolbuser` (lowercase) in Athena, `idOLBUser` (CamelCase) in Python code.** `_normalize_athena_columns` maps between the two.
+- **`SELECT` with explicit columns** (not `*`) in production queries. Includes `metadata`.
+- **Casting `idOLBUserTxns` to int:** the payload may carry floats (`83772.0`). The `int()` cast + `pd.isnull()` check before it handles both cases.
+- **Tests cache `_similarity_mod` and `HAS_SIMILARITY`.** You need an `autouse` monkeypatch fixture that resets them, otherwise tests are order-dependent.
 
 ## See also
 

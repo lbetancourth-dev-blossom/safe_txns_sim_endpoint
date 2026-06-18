@@ -4,27 +4,27 @@
 
 ## Purpose
 
-Scripts para empaquetar `endpoint/*.py` + artefactos del modelo en `model.tar.gz`, subirlo a S3, y desplegarlo como SageMaker endpoint `SAFE_TXNS_ENDPOINT_DEV`.
+Scripts to package `endpoint/*.py` + model artifacts into `model.tar.gz`, upload it to S3, and deploy it as the SageMaker endpoint `SAFE_TXNS_ENDPOINT_DEV`.
 
 ## Where things live
 
 ```
 deploy/
 ├── deploy_final.py    — full pipeline: S3 download → tar → upload → SageMaker deploy
-└── deploy_with_sdk.py — wrapper simple SageMaker SDK (use when tarball already in S3)
+└── deploy_with_sdk.py — simple SageMaker SDK wrapper (use when tarball is already in S3)
 ```
 
 ## Key files
 
 - `deploy_final.py` — full pipeline. S3 download → tar → upload → SageMaker create/update.
-- `deploy_with_sdk.py` — versión simple con `SKLearnModel`. Usa cuando ya tenés `model.tar.gz` listo en S3.
+- `deploy_with_sdk.py` — simple version with `SKLearnModel`. Use when you already have `model.tar.gz` ready in S3.
 
 ## Conventions
 
-- **Idempotent.** Si el endpoint existe, hace `update_endpoint`; si no, `create_endpoint`. Mismo nombre `SAFE_TXNS_ENDPOINT_DEV`.
-- **Waiter** de status post-deploy: 30s × 20 polls (~10 min) hasta `InService`.
-- **`source_dir="endpoint"`** en `SKLearnModel` para que SageMaker auto-instale `requirements.txt`.
-- **Env vars cross-account.** Inyecta `SIMILARITY_ATHENA_*` para apuntar a recursos de la cuenta alpha.
+- **Idempotent.** If the endpoint exists, runs `update_endpoint`; if not, `create_endpoint`. Same name `SAFE_TXNS_ENDPOINT_DEV`.
+- **Status waiter** post-deploy: 30s × 20 polls (~10 min) until `InService`.
+- **`source_dir="endpoint"`** in `SKLearnModel` so SageMaker auto-installs `requirements.txt`.
+- **Cross-account env vars.** Injects `SIMILARITY_ATHENA_*` to point to resources in the alpha account.
 
 ## Dependencies
 
@@ -32,19 +32,19 @@ deploy/
 - `sagemaker` SDK
 - AWS profile `blossom-dev`, role `AmazonSageMaker-ExecutionRole-20241029T103557`
 - AWS account 436631265256 (development)
-- Image base: `scikit-learn 1.2-1 CPU`
+- Base image: `scikit-learn 1.2-1 CPU`
 
 ## Tests
 
-No hay test suite dedicado. Validación = corrida real + waiter de status. Para CI ideal habría dry-run que valide el tarball antes del upload, pero no existe hoy.
+No dedicated test suite. Validation = actual run + status waiter. For ideal CI there would be a dry-run that validates the tarball before the upload, but that does not exist today.
 
 ## Gotchas
 
-- **Cross-account permissions.** Para que el endpoint pueda leer Athena en alpha, el rol en development DEBE tener policies adicionales. Si no las tiene, el deploy "funciona" pero el endpoint loguea `similarity.athena_failure` con `category=permission` en cada call.
-- **No usar `--no-verify` en commits del deploy.** Los hooks pueden detectar credenciales o configs sensibles.
-- **El nombre del endpoint es hardcoded** `SAFE_TXNS_ENDPOINT_DEV`. Cambiar acá implica cambiar también `test/process_endpoint.py` y cualquier consumer.
-- **Re-deploy NO retraina el modelo.** Solo reemplaza el código (`endpoint/*.py`) y el tarball. Los artifacts del K-Means se descargan de S3.
-- **El bucket de modelos es `blossom-analytics-safe-dev-nv`** (cuenta dev), distinto del datalake (`blossom-analytics-datalake-alpha`).
+- **Cross-account permissions.** For the endpoint to read Athena in alpha, the role in development MUST have additional policies. If it does not, the deploy "succeeds" but the endpoint logs `similarity.athena_failure` with `category=permission` on every call.
+- **Do not use `--no-verify` on deploy commits.** Hooks may detect credentials or sensitive configs.
+- **The endpoint name is hardcoded** as `SAFE_TXNS_ENDPOINT_DEV`. Changing it here also requires changing `test/process_endpoint.py` and any consumer.
+- **Re-deploy does NOT retrain the model.** It only replaces the code (`endpoint/*.py`) and the tarball. K-Means artifacts are downloaded from S3.
+- **The model bucket is `blossom-analytics-safe-dev-nv`** (dev account), distinct from the datalake bucket (`blossom-analytics-datalake-alpha`).
 
 ## See also
 
