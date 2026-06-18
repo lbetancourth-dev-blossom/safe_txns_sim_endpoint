@@ -1022,7 +1022,8 @@ def find_similar_transaction(
             source_uri = f"file://{local_csv_path}"
         elif idolbuser is not None:
             # D2 CLOSED: Use Athena as the sole source when idolbuser provided
-            logger.info(f"[SIMILARITY] Loading from Athena for user {_hash_idolbuser(idolbuser)}")
+            logger.info(f"[SIMILARITY] Loading from Athena for idolbuser={idolbuser}")
+            print(f"[SIMILARITY] Loading from Athena for idolbuser={idolbuser}")
             try:
                 ref_df, ref_vectors, ref_labels, ref_ids = load_reference_data_from_athena(
                     idolbuser=idolbuser,
@@ -1030,9 +1031,10 @@ def find_similar_transaction(
                     timeout_seconds=timeout_seconds,
                     force_reload=force_reload
                 )
-                source_uri = f"athena:idolbuser={_hash_idolbuser(idolbuser)}:window={window_months}m"
+                source_uri = f"athena:idolbuser={idolbuser}:window={window_months}m"
             except TimeoutError as e:
-                logger.error(f"[SIMILARITY] Athena timeout for user {_hash_idolbuser(idolbuser)}: {e}")
+                logger.error(f"[SIMILARITY] Athena timeout for idolbuser={idolbuser}: {e}")
+                print(f"[SIMILARITY] Athena timeout for idolbuser={idolbuser}: {e}")
                 return {
                     "sim_match_txn_id": None,
                     "sim_score": None,
@@ -1043,7 +1045,8 @@ def find_similar_transaction(
 
             # Check if data loading failed
             if ref_vectors is None or ref_labels is None:
-                logger.warning(f"[SIMILARITY] No Athena data for user {_hash_idolbuser(idolbuser)}")
+                logger.warning(f"[SIMILARITY] No Athena data for idolbuser={idolbuser}")
+                print(f"[SIMILARITY] No Athena data for idolbuser={idolbuser}")
                 return {
                     "sim_match_txn_id": None,
                     "sim_score": None,
@@ -1153,7 +1156,7 @@ def find_similar_transaction(
             if matched:
                 logger.info(
                     f"[SIMILARITY] ATHENA MATCH: txn={best_txn_id}, "
-                    f"score={best_score:.4f}, user={_hash_idolbuser(idolbuser)}"
+                    f"score={best_score:.4f}, idolbuser={idolbuser}"
                 )
         else:
             # S3/legacy source: return full result object
