@@ -235,18 +235,19 @@ def load_reference_data_from_athena(
         region = os.getenv("SIMILARITY_ATHENA_REGION", "us-east-2")
 
         # F1 + F11: parameterized query with explicit column list (NO f-string, NO SELECT *)
+        # Filter by date only (YYYY-MM-DD), not time, to capture all transactions on matching days
         sql = """
             SELECT idolbuser, createdat, statuswarning, metadata, transactionid
             FROM dlh_silver_safe_alpha.safetransactionresults
             WHERE idolbuser = %(user)s
-              AND createdat >= %(window_start)s
-              AND createdat <= %(window_end)s
+              AND CAST(createdat AS DATE) >= %(window_start_date)s
+              AND CAST(createdat AS DATE) <= %(window_end_date)s
               AND statuswarning IN ('SAFE', 'RISKY')
         """
         params = {
-            "user": idolbuser_int,          # int cast as defense-in-depth
-            "window_start": start,           # datetime object
-            "window_end": end,               # datetime object
+            "user": idolbuser_int,
+            "window_start_date": start.date(),  # YYYY-MM-DD only (no time)
+            "window_end_date": end.date(),      # YYYY-MM-DD only (no time)
         }
 
         def _run_query():
