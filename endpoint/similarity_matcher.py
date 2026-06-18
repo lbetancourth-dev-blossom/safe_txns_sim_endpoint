@@ -87,6 +87,61 @@ DEFAULT_THRESHOLD = 0.90
 DEFAULT_S3_BUCKET = "blossom-analytics-datalake-alpha"
 DEFAULT_S3_KEY = "datalake/silver/SAFE/safetransactionresults/data/"  # Parquet directory
 
+# 56 exact fields for similarity matching (no transformation, no normalization)
+EXACT_MATCH_FIELDS = [
+    # Numerical features (31)
+    'num__amount',
+    'num__is_night',
+    'num__hour_sin',
+    'num__hour_cos',
+    'num__day_of_week_cos',
+    'num__count_all_txn_last_5m',
+    'num__total_amount_all_txn_last_5m',
+    'num__count_txn_to_recipient_account_last_5m',
+    'num__total_amount_txn_to_recipient_account_last_5m',
+    'num__count_txn_to_recipient_account_in_last_2_months',
+    'num__is_first_txn_from_this_olb_user_to_this_recipient_account_q_6h',
+    'num__amount_coef_var_lst6m',
+    'num__pct_txns_under_100_lst6m',
+    'num__pct_txns_over_1k_lst6m',
+    'num__user_avg_amount_txn_per_active_day_last_6_months',
+    'num__count_user_all_txn_in_last_6_months',
+    'num__count_user_cancelled_txn_in_last_week',
+    'num__count_user_cancelled_txn_in_last_month',
+    'num__count_user_potential_fraud_txn_in_last_2_months',
+    'num__recency_user_created_days',
+    'num__count_suspected_actions_in_current_session',
+    'num__total_actions_session',
+    'num__is_auth_email_session',
+    'num__is_auth_phone_session',
+    'num__total_accounts',
+    'num__user_age',
+    'num__is_amount_greater_than_cu_p95_amount_ach_txn_in_last_6_months',
+    'num__txn_amount_vs_cu_avg_amount_ach_txn_in_last_6_months',
+    'num__is_batch',
+    'num__amt_vs_user_ach_avg_day',
+    'num__ach_count_share_6m',
+    # Categorical features (18)
+    'cat__TransactionProcessingType_Intime',
+    'cat__TransactionProcessingType_Intime_From_Recurrent',
+    'cat__TransactionProcessingType_Recurrent',
+    'cat__TransactionProcessingType_Schedule',
+    'cat__TransactionOrigin_External Internal',
+    'cat__TransactionOrigin_Internal External',
+    'cat__TransactionOrigin_M2m External',
+    'cat__TransactionCategory_SEND_MONEY_ACH',
+    'cat__TransactionCategory_SEND_MONEY_BATCH_PAYMENT_ACH',
+    'cat__TransactionCategory_SEND_MONEY_PAYROLL_ACH',
+    'cat__TransactionCategory_SINGLE_COLLECTION_ACH',
+    'cat__TransactionCategory_TRANSFER_EXTERNAL_TO_LOAN_ACH',
+    'cat__TransactionCategory_TRANSFER_INTERNAL_EXTERNAL_ACH',
+    'cat__user_type_mixed',
+    'cat__user_type_personal',
+    'cat__access_DESKTOP',
+    'cat__access_MOBILE',
+    'cat__access_missing',
+]
+
 # Global cache for reference data (keyed by s3_uri or local path)
 # Cache structure: {cache_key: {'data': (df, vectors, labels, ids), 'file_count': int}}
 _REFERENCE_CACHE = {}
@@ -997,6 +1052,83 @@ def calculate_similarity(
 
 
 # =========================
+# Exact Field Matching (56 fields, no transformation)
+# =========================
+
+def _extract_exact_fields(decision_result: Dict[str, Any], field_list: List[str]) -> Dict[str, Any]:
+    """
+    Extract exact field values from decision_result without any transformation.
+
+    Args:
+        decision_result: Dictionary containing field values
+        field_list: List of field names to extract
+
+    Returns:
+        Dictionary with field names and values, or empty dict if fields missing
+    """
+    extracted = {}
+    for field in field_list:
+        if field in decision_result:
+            extracted[field] = decision_result[field]
+    return extracted
+
+
+def _calculate_exact_field_match(
+    query_fields: Dict[str, Any],
+    ref_rows: pd.DataFrame,
+    field_list: List[str]
+) -> Tuple[np.ndarray, int]:
+    """
+    Calculate exact field match scores comparing 56 specific fields.
+
+    For each reference row, count how many fields match exactly with the query.
+    Score = number_of_exact_matches / total_fields (0.0 to 1.0).
+
+    Args:
+        query_fields: Dict of query fields to match
+        ref_rows: DataFrame of reference rows (from Athena)
+        field_list: List of field names to compare
+
+    Returns:
+        Tuple of (scores array, best_match_index)
+        - scores: float array, one score per reference row (0.0-1.0)
+        - best_match_index: index of highest score
+    """
+    if len(ref_rows) == 0:
+        return np.array([]), -1
+
+    scores = []
+
+    for idx, row in ref_rows.iterrows():
+        matches = 0
+        total = 0
+
+        for field in field_list:
+            total += 1
+            query_val = query_fields.get(field)
+            ref_val = row.get(field)
+
+            # Direct equality comparison, no transformation
+            if query_val == ref_val:
+                matches += 1
+
+        # Score: percentage of fields that match exactly (0.0-1.0)
+        score = matches / total if total > 0 else 0.0
+        scores.append(score)
+
+    scores_array = np.array(scores, dtype=np.float64)
+    best_idx = int(np.argmax(scores_array)) if len(scores_array) > 0 else -1
+
+    if best_idx >= 0:
+        logger.info(
+            f"[SIMILARITY] Exact field match: checked {len(ref_rows)} reference rows, "
+            f"best match score={scores_array[best_idx]:.4f} ({int(scores_array[best_idx]*len(field_list))}/{len(field_list)} fields matched)"
+        )
+
+    return scores_array, best_idx
+
+
+# =========================
 # Main Matching Logic
 # =========================
 
@@ -1109,51 +1241,40 @@ def find_similar_transaction(
                 key_name = s3_key or os.getenv("SIMILARITY_S3_KEY", DEFAULT_S3_KEY)
                 source_uri = f"s3://{bucket_name}/{key_name}"
         
-        # Extract query feature vector
-        query_vector = _extract_feature_vector(query_result)
-        
-        if query_vector is None:
-            logger.warning("[SIMILARITY] Failed to extract query feature vector")
+        # Extract exact 56 fields (no transformation, no normalization)
+        query_fields = _extract_exact_fields(query_result, EXACT_MATCH_FIELDS)
+
+        if not query_fields:
+            logger.warning("[SIMILARITY] Failed to extract exact fields from query")
             return {
                 "matched": False,
                 "similarity_score": 0.0,
                 "status_warning": "NONE",
                 "top_matches": [],
-                "error": "Failed to extract query features"
+                "error": "Failed to extract exact fields"
             }
-        
-        # Handle dimension mismatch
-        if query_vector.shape[0] != ref_vectors.shape[1]:
-            logger.warning(
-                f"[SIMILARITY] Dimension mismatch: query={query_vector.shape[0]}, "
-                f"reference={ref_vectors.shape[1]}"
-            )
-            
-            # Pad or truncate to match
-            target_dim = ref_vectors.shape[1]
-            if query_vector.shape[0] < target_dim:
-                # Pad with zeros
-                query_vector = np.pad(query_vector, (0, target_dim - query_vector.shape[0]))
-            else:
-                # Truncate
-                query_vector = query_vector[:target_dim]
-        
-        # Calculate similarities
-        similarities = calculate_similarity(query_vector, ref_vectors, metric=metric)
-        
-        if len(similarities) == 0:
+
+        # Calculate exact field match scores
+        similarities, best_idx = _calculate_exact_field_match(
+            query_fields=query_fields,
+            ref_rows=ref_df,
+            field_list=EXACT_MATCH_FIELDS
+        )
+
+        if len(similarities) == 0 or best_idx < 0:
+            logger.warning("[SIMILARITY] No exact field matches calculated")
             return {
                 "matched": False,
                 "similarity_score": 0.0,
                 "status_warning": "NONE",
                 "top_matches": [],
-                "error": "No similarities calculated"
+                "error": "No matches found"
             }
-        
-        # Get top k matches
+
+        # Get top k matches (sorted by similarity score descending)
         top_indices = np.argsort(similarities)[::-1][:top_k]
         top_scores = similarities[top_indices]
-        
+
         # Build top matches list with transaction_id
         top_matches = []
         for idx, score in zip(top_indices, top_scores):
@@ -1162,9 +1283,9 @@ def find_similar_transaction(
                 "similarity_score": float(score),
                 "status_warning": ref_labels[idx]
             })
-        
+
         # Get best match
-        best_idx = top_indices[0]
+        best_idx = int(top_indices[0])
         best_score = float(similarities[best_idx])
         best_label = ref_labels[best_idx]
         best_txn_id = ref_ids[best_idx]
