@@ -391,26 +391,32 @@ def _extract_vectors_from_df(
         try:
             metadata_raw = row.get("metadata")
             if pd.isna(metadata_raw):
+                logger.debug(f"[SIMILARITY] Row {idx}: metadata is NaN")
                 continue
             metadata_count += 1
 
             metadata = json.loads(metadata_raw) if isinstance(metadata_raw, str) else metadata_raw
             decision_result = metadata.get("decisionResult")
             if not decision_result:
+                logger.debug(f"[SIMILARITY] Row {idx}: no decisionResult in metadata")
                 continue
             decision_count += 1
 
             if HAS_SCHEMA_VALIDATOR and validate_features_only is not None:
-                if not validate_features_only(decision_result, require_all=False):
+                is_valid = validate_features_only(decision_result, require_all=False)
+                if not is_valid:
+                    logger.debug(f"[SIMILARITY] Row {idx}: schema validation failed")
                     continue
 
             feature_vector = _extract_feature_vector(decision_result)
             if feature_vector is None or len(feature_vector) == 0:
+                logger.debug(f"[SIMILARITY] Row {idx}: failed to extract feature vector")
                 continue
             vector_count += 1
 
             status = str(row.get("statusWarning", "")).strip().upper()
             if status not in ("SAFE", "RISKY"):
+                logger.debug(f"[SIMILARITY] Row {idx}: statusWarning={status} not in ('SAFE', 'RISKY')")
                 continue
             status_count += 1
 
