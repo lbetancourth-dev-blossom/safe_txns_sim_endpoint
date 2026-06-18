@@ -1311,18 +1311,18 @@ def find_similar_transaction(
 
         # Determine return format based on Athena source
         if idolbuser is not None:
-            # Athena source: return fields expected by inference_rules.py
+            # Athena source: always return best match info; sim_decision only when above threshold
             result = {
-                "sim_match_txn_id": best_txn_id if matched else None,
-                "sim_score": best_score if matched else None,
-                "sim_status": best_label if matched else None,
+                "sim_match_txn_id": best_txn_id,
+                "sim_score": best_score,
+                "sim_status": best_label,
                 "sim_decision": "match" if matched else None
             }
-            if matched:
-                logger.info(
-                    f"[SIMILARITY] ATHENA MATCH: txn={best_txn_id}, "
-                    f"score={best_score:.4f}, idolbuser={idolbuser}"
-                )
+            logger.info(
+                f"[SIMILARITY] ATHENA: txn={best_txn_id}, score={best_score:.4f}, "
+                f"status={best_label}, decision={'match' if matched else 'below_threshold'}, "
+                f"idolbuser={idolbuser}"
+            )
         else:
             # S3/legacy source: return full result object
             result = {
