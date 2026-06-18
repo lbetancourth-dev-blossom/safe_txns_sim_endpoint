@@ -10,7 +10,7 @@
 | **Region** | us-east-1 (endpoint) · us-east-2 (Athena data) |
 | **AWS Account** | 436631265256 (development) |
 | **Entry point** | `inference_rules.py` |
-| **Model tarball** | `s3://blossom-analytics-safe-dev-nv/output/kmeans-endpoint-v2-fixes/model.tar.gz` |
+| **Model tarball** | `s3://blossom-analytics-safe-dev-nv/safe_txns/similarity/endpoint/v2/model.tar.gz` |
 
 ---
 
@@ -414,7 +414,7 @@ See `docs/guides/DEPLOYMENT_GUIDE.md` for full steps. Deploy **must** be done fr
 
 **Tarball S3 path:**
 ```
-s3://blossom-analytics-safe-dev-nv/output/kmeans-endpoint-v2-fixes/model.tar.gz
+s3://blossom-analytics-safe-dev-nv/safe_txns/similarity/endpoint/v2/model.tar.gz
 ```
 
 **Minimal notebook deploy cell:**
@@ -424,7 +424,7 @@ from sagemaker import get_execution_role, Session
 
 role = get_execution_role()
 sk_model = SKLearnModel(
-    model_data="s3://blossom-analytics-safe-dev-nv/output/kmeans-endpoint-v2-fixes/model.tar.gz",
+    model_data="s3://blossom-analytics-safe-dev-nv/safe_txns/similarity/endpoint/v2/model.tar.gz",
     role=role,
     entry_point="inference_rules.py",
     framework_version="1.2-1",

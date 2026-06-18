@@ -13,7 +13,7 @@ How to deploy the SageMaker endpoint with exact field matching and Athena simila
 The current model artifact (after DATA-1264 fixes) lives at:
 
 ```
-s3://blossom-analytics-safe-dev-nv/output/kmeans-endpoint-v2-fixes/model.tar.gz
+s3://blossom-analytics-safe-dev-nv/safe_txns/similarity/endpoint/v2/model.tar.gz
 ```
 
 ---
@@ -45,7 +45,7 @@ s3://blossom-analytics-safe-dev-nv/output/kmeans-endpoint-v2-fixes/model.tar.gz
    role = get_execution_role()
 
    # Current model artifact (DATA-1264 fixes)
-   model_artifact_uri = "s3://blossom-analytics-safe-dev-nv/output/kmeans-endpoint-v2-fixes/model.tar.gz"
+   model_artifact_uri = "s3://blossom-analytics-safe-dev-nv/safe_txns/similarity/endpoint/v2/model.tar.gz"
 
    sk_model = SKLearnModel(
        model_data=model_artifact_uri,
