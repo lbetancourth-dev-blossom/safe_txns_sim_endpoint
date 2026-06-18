@@ -1143,7 +1143,11 @@ def predict_fn(input_data, model_artifacts):
 
             # D2 CLOSED: Athena is the only source — no s3_bucket/s3_key kwargs
             try:
-                idolbuser_int = int(input_data.iloc[idx]["idOLBUserTxns"])
+                # Extract idOLBUserTxns with debug logging
+                idolbuser_val = input_data.iloc[idx]["idOLBUserTxns"]
+                idolbuser_int = int(idolbuser_val)
+                print(f"[SIMILARITY] Row {idx}: idOLBUserTxns={idolbuser_int}")
+
                 result = _similarity_mod.find_similar_transaction(
                     query_result=query_features,
                     threshold=similarity_threshold,
@@ -1152,6 +1156,7 @@ def predict_fn(input_data, model_artifacts):
                     window_months=int(os.getenv("ATHENA_WINDOW_MONTHS", "6")),
                     timeout_seconds=int(os.getenv("ATHENA_TIMEOUT_SECONDS", "10")),
                 )
+                print(f"[SIMILARITY] Row {idx}: result={result}")
 
                 sim_match_txn_id = result.get("sim_match_txn_id", None)
                 sim_score = result.get("sim_score", None)
@@ -1170,6 +1175,24 @@ def predict_fn(input_data, model_artifacts):
                 _logging.getLogger(__name__).warning(
                     f"[SIMILARITY][ATHENA][TIMEOUT] row={idx} error={repr(e)}"
                 )
+                print(f"[SIMILARITY][TIMEOUT] Row {idx}: {repr(e)}")
+                similarity_result = {
+                    "sim_match_txn_id": None,
+                    "sim_score": None,
+                    "sim_status": None,
+                    "sim_decision": None,
+                }
+            except KeyError as e:
+                print(f"[SIMILARITY][KEYERROR] Row {idx}: Column not found: {repr(e)}")
+                print(f"[SIMILARITY][DEBUG] Available columns: {list(input_data.columns)}")
+                similarity_result = {
+                    "sim_match_txn_id": None,
+                    "sim_score": None,
+                    "sim_status": None,
+                    "sim_decision": None,
+                }
+            except ValueError as e:
+                print(f"[SIMILARITY][VALUEERROR] Row {idx}: Invalid value: {repr(e)}")
                 similarity_result = {
                     "sim_match_txn_id": None,
                     "sim_score": None,
@@ -1177,7 +1200,7 @@ def predict_fn(input_data, model_artifacts):
                     "sim_decision": None,
                 }
             except Exception as e:
-                print(f"[SIMILARITY] Error processing row {idx}: {repr(e)}")
+                print(f"[SIMILARITY][ERROR] Row {idx}: {type(e).__name__}: {repr(e)}")
                 similarity_result = {
                     "sim_match_txn_id": None,
                     "sim_score": None,
