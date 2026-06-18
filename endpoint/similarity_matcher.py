@@ -1124,7 +1124,24 @@ def _calculate_exact_field_match(
             query_val = query_fields.get(field)
             ref_val = ref_fields.get(field)
 
-            # Direct equality comparison, no transformation
+            # None vs 0/0.0: field absent from query (not in SELECTED) is equivalent to 0
+            if query_val is None and ref_val is not None:
+                try:
+                    if float(ref_val) == 0.0:
+                        matches += 1
+                        continue
+                except (TypeError, ValueError):
+                    pass
+
+            # Float near-equality (1e-9 tolerance) handles round-trip precision loss
+            if query_val is not None and ref_val is not None:
+                try:
+                    if abs(float(query_val) - float(ref_val)) <= 1e-9:
+                        matches += 1
+                        continue
+                except (TypeError, ValueError):
+                    pass
+
             if query_val == ref_val:
                 matches += 1
 
@@ -1312,15 +1329,19 @@ def find_similar_transaction(
         # Determine return format based on Athena source
         if idolbuser is not None:
             # Athena source: always return best match info; sim_decision only when above threshold
+            if matched and best_label in ("SAFE", "RISKY"):
+                sim_decision = "Accept" if best_label == "SAFE" else "Reject"
+            else:
+                sim_decision = None
             result = {
                 "sim_match_txn_id": best_txn_id,
                 "sim_score": best_score,
                 "sim_status": best_label,
-                "sim_decision": "match" if matched else None
+                "sim_decision": sim_decision,
             }
             logger.info(
                 f"[SIMILARITY] ATHENA: txn={best_txn_id}, score={best_score:.4f}, "
-                f"status={best_label}, decision={'match' if matched else 'below_threshold'}, "
+                f"status={best_label}, decision={sim_decision or 'below_threshold'}, "
                 f"idolbuser={idolbuser}"
             )
         else:
