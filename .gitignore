@@ -55,3 +55,4 @@ data/wp_input.csv
 .worktrees/
 changes/*/.session-state.json
 changes/*/.execute-progress.log
+*.csv
