@@ -34,7 +34,6 @@ safe_txns_sim_endpoint/
 ├── endpoint/        Código del contenedor SageMaker (4 módulos Python)
 ├── deploy/          Scripts de packaging y deploy del endpoint
 ├── tests/           Tests pytest + scripts manuales (process_endpoint.py)
-├── data_eng/        Pipeline Bronze→Silver (offline)
 ├── data/            CSVs de test/reference (no es código)
 ├── changes/         Artefactos SDD por ticket activo (ver SDD-Workflow)
 ├── docs/            Documentación
@@ -42,7 +41,7 @@ safe_txns_sim_endpoint/
 │   └── (otras)      Docs temáticas legacy (ENDPOINT_*, SIMILARITY_*, etc.)
 ├── temp_artifacts/  Modelo descargado temporalmente (gitignored)
 ├── .worktrees/      Git worktrees activos por ticket (gitignored)
-└── (otros)          README.md, setup_sagemaker.sh, notebooks
+└── safe-txn-enpoint.ipynb  Deploy notebook (run from SageMaker Studio)
 ```
 
 ## Modules
@@ -52,28 +51,25 @@ safe_txns_sim_endpoint/
 | Endpoint | `endpoint/` | Código del contenedor SageMaker (K-means + reglas + similitud Athena) |
 | Deploy | `deploy/` | Scripts SageMaker SDK para empaquetar y desplegar |
 | Test | `tests/` | Tests integración + invocación del endpoint real |
-| Data Engineering | `data_eng/` | Pipeline ETL Bronze→Silver (offline) |
+
 
 Detalle completo en [`docs/codemap/00-overview/README.md`](docs/codemap/00-overview/README.md).
 
 ## Build & run
 
 ```bash
-# Setup inicial AWS
-./setup_sagemaker.sh
+# AWS SSO login
 aws sso login --sso-session blossom
 
 # Tests
 pytest tests/similarity/test_athena_similarity_*.py tests/endpoint/test_graceful_degradation.py -v
 
-# Deploy a SageMaker (cuenta dev)
-python deploy/deploy_similarity_endpoint.py
+# Deploy from SageMaker notebook (NOT local CLI — IAM trust issue)
+# Open safe-txn-enpoint.ipynb → run Step 3
 
 # Smoke test contra endpoint productivo
-python tests/process_endpoint.py --input data/wp_input.csv --output data/wp_result.csv
+python tests/process_endpoint.py --input data/test_escenarios.csv --output data/results.csv
 
-# Extracción offline desde Silver
-python data_eng/extract_safe_silver.py --start 2026-01-01 --end 2026-06-01
 ```
 
 ## Conventions
