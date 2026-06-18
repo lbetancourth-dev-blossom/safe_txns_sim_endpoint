@@ -1109,10 +1109,20 @@ def _calculate_exact_field_match(
         matches = 0
         total = 0
 
+        # Extract ref fields from metadata.decisionResult (where they actually live in Athena rows)
+        ref_fields: Dict[str, Any] = {}
+        metadata_raw = row.get("metadata")
+        if metadata_raw is not None and not (isinstance(metadata_raw, float) and pd.isna(metadata_raw)):
+            try:
+                meta = json.loads(metadata_raw) if isinstance(metadata_raw, str) else metadata_raw
+                ref_fields = meta.get("decisionResult", {}) or {}
+            except Exception:
+                ref_fields = {}
+
         for field in field_list:
             total += 1
             query_val = query_fields.get(field)
-            ref_val = row.get(field)
+            ref_val = ref_fields.get(field)
 
             # Direct equality comparison, no transformation
             if query_val == ref_val:
