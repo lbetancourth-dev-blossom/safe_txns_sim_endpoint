@@ -5,7 +5,7 @@ Risk scoring and fraud detection endpoint for credit union transactions using K-
 ## Key Features
 
 - **K-Means Clustering** — Detect anomalous transaction patterns
-- **Exact Field Matching** — Compare 56 fields against historical Athena transactions (no normalization)
+- **Exact Field Matching** — Compare 49 fields against historical Athena transactions; sim_decision: 'Accept'/'Reject' when score >= 0.90 (based on sim_status), None otherwise
 - **Athena Integration** — Query 6-month transaction history with sliding window per transaction
 - **Statistical Rules v8** — Behavior-based fraud rules (12 rules) for risk evaluation
 - **Hybrid Policy** — Combine clustering + similarity + rules for robust decisions
@@ -110,7 +110,7 @@ safe_txns_sim_endpoint/
 │   └── CLAUDE.md                          # Module context
 │
 ├── data/                                  # Test data
-│   ├── test_escenarios.csv                # Test transactions
+│   ├── test_escenarios.csv                # 16 test scenarios (HIGH_SIM, LOW_SIM, NO_HISTORY, edge cases)
 │   └── data_eng/                          # Data engineering reports
 │       ├── ALPHA_EXTRACTION_REPORT.md
 │       └── COMPARISON_REPORT.md

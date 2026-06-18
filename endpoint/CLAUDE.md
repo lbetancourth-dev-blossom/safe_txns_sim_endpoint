@@ -40,12 +40,12 @@ endpoint/
 - **Imports internos:** ninguno cross-file (todos los módulos son lazy-loaded)
 - **External:** pyathena, python-dateutil, pyarrow, boto3
 - **Imported by:** scripts en `deploy/` (empaquetan estos 4 .py al tarball)
-- **Tested by:** `test/test_*.py` (suite en módulo `test/`) + `endpoint/test_csv_loading.py`
+- **Tested by:** `tests/test_*.py` (suite en módulo `tests/`) + `endpoint/test_csv_loading.py`
 
 ## Tests
 
 - Test embebido: `endpoint/test_csv_loading.py`
-- Suite externa: `pytest test/test_athena_similarity_*.py test/test_graceful_degradation.py`
+- Suite externa: `pytest tests/similarity/test_athena_similarity_*.py tests/endpoint/test_graceful_degradation.py`
 - Cobertura: ~10 archivos de test, ~30+ test cases
 
 ## Gotchas

@@ -84,7 +84,7 @@ El score final del endpoint es una combinación de K-means + rules vía `combine
 
 - `endpoint/statistical_rules.py` — 354 líneas, las 12 reglas + scoring + classify_risk
 - `endpoint/inference_rules.py` L990–1020 — invocación de `score_transaction_v8()` por row
-- `test/test_inference_integration.py` — cobertura E2E
+- `tests/endpoint/test_inference_integration.py` — cobertura E2E
 
 ## See also
 

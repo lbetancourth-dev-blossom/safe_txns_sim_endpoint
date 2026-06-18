@@ -15,7 +15,7 @@ Mapeo directorio → módulo. Si tocás un archivo bajo cualquiera de estos path
 |---|---|---|
 | `endpoint/` | Endpoint (código del contenedor SageMaker) | [[01-endpoint/README]] |
 | `deploy/` | Deploy scripts | [[02-deploy/README]] |
-| `test/` | Tests de integración + scripts manuales | [[03-test/README]] |
+| `tests/` | Tests de integración + scripts manuales | [[03-test/README]] |
 | `data_eng/` | Pipeline Bronze→Silver | [[04-data-eng/README]] |
 
 ## Directorios sin módulo (datos o trabajo en flight)

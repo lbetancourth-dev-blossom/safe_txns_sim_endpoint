@@ -9,7 +9,7 @@ last_commit: 2ac735d
 
 # Test
 
-**Path:** `test/`
+**Path:** `tests/`
 **Maintainers:** Landneyker Betancourth
 
 ## Purpose
@@ -21,37 +21,39 @@ Tests de integración (pytest) + scripts manuales para invocar el endpoint real 
 | Script | Tipo | Cuándo se usa |
 |---|---|---|
 | `python process_endpoint.py --input data/wp_input.csv --output data/wp_result.csv` | manual | Invocar el endpoint productivo con un CSV. Requiere AWS SSO activo |
-| `pytest test/test_athena_similarity_*.py` | automated | Suite de tests de Athena (parametrización, ventana, logging, input contract) |
-| `pytest test/test_graceful_degradation.py` | automated | Casos de Athena empty, exception, permission |
-| `python test/test_local_integration.py` | manual | Simulación local sin AWS (carga reference data de archivo) |
-| `python test/transform_similarity.py` | manual | Utility: convierte `wp_result.csv` → formato SafeTransactionResults |
-| `python test/upload_to_s3.py` | manual | Sube similarity reference CSV a S3 |
+| `pytest tests/similarity/test_athena_similarity_*.py` | automated | Suite de tests de Athena (parametrización, ventana, logging, input contract) |
+| `pytest tests/endpoint/test_graceful_degradation.py` | automated | Casos de Athena empty, exception, permission |
+| `python tests/integration/test_local_integration.py` | manual | Simulación local sin AWS (carga reference data de archivo) |
+| `python tests/transform_similarity.py` | manual | Utility: convierte `wp_result.csv` → formato SafeTransactionResults |
+| `python tests/upload_to_s3.py` | manual | Sube similarity reference CSV a S3 |
 
 ## Internal structure
 
 ```
-test/
+tests/
 ├── process_endpoint.py                          — invoca data-safe-txns-endpoint via boto3 sagemaker-runtime
 ├── transform_similarity.py                      — transforma output del endpoint a formato datalake
 ├── upload_to_s3.py                              — upload de reference data a S3
 ├── verify_similarity_changes.py                 — verifica behavior changes
 ├── install_sagemaker_notebook.py                — setup utility
 │
-├── test_local_integration.py                    — simulación local con S3 reference
-├── test_e2e_with_s3.py                          — E2E con Parquet de S3
-├── test_inference_integration.py                — integration K-means + rules + sim
-├── test_similarity_fields.py                    — validates sim_* response structure
-├── test_parquet_similarity.py                   — Parquet loader (legacy / fallback)
-├── test_dynamic_reload.py                       — cache invalidation
-├── test_graceful_degradation.py                 — Athena failures + null fields
+├── integration/
+│   ├── test_local_integration.py                — simulación local con S3 reference
+│   └── test_e2e_with_s3.py                      — E2E con Parquet de S3
 │
-├── test_athena_similarity.py                    — Athena base
-├── test_athena_similarity_sql_parametrized.py   — F1: parameterized queries, no f-string SQL
-├── test_athena_similarity_input_contract.py     — D1: idOLBUserTxns/createdAtTxns validation
-├── test_athena_similarity_logging.py            — F5+: 2-path INFO/WARNING + classify_exception
-├── test_athena_similarity_window.py             — sliding window correctness
-├── test_athena_similarity_window_computation.py — _compute_sliding_window unit
-└── test_athena_similarity_fallback.py           — exception → sim_*=null
+├── endpoint/
+│   ├── test_inference_integration.py            — integration K-means + rules + sim
+│   ├── test_graceful_degradation.py             — Athena failures + null fields
+│   └── test_dynamic_reload.py                   — cache invalidation
+│
+└── similarity/
+    ├── test_similarity_fields.py                — validates sim_* response structure
+    ├── test_parquet_similarity.py               — Parquet loader (legacy / fallback)
+    ├── test_athena_similarity_sql_parametrized.py   — F1: parameterized queries, no f-string SQL
+    ├── test_athena_similarity_input_contract.py     — D1: idOLBUserTxns/createdAtTxns validation
+    ├── test_athena_similarity_logging.py            — F5+: 2-path INFO/WARNING + classify_exception
+    ├── test_athena_similarity_window.py             — sliding window correctness
+    └── test_athena_similarity_fallback.py           — exception → sim_*=null
 ```
 
 ## Key files
@@ -99,16 +101,16 @@ Requiere AWS SSO activo: `aws sso login --sso-session blossom`.
 
 ```bash
 # Toda la suite Athena
-pytest test/test_athena_similarity_*.py -v
+pytest tests/similarity/test_athena_similarity_*.py -v
 
 # Tests de robustez
-pytest test/test_graceful_degradation.py -v
+pytest tests/endpoint/test_graceful_degradation.py -v
 
 # Test de un componente específico
-pytest test/test_athena_similarity_sql_parametrized.py -v
+pytest tests/similarity/test_athena_similarity_sql_parametrized.py -v
 
 # E2E (requiere reference data en path)
-python test/test_local_integration.py
+python tests/integration/test_local_integration.py
 ```
 
 ## Sub-features

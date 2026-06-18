@@ -40,7 +40,7 @@ Cada módulo tiene su `CLAUDE.md` para agentes trabajando localmente:
 
 - `endpoint/CLAUDE.md`
 - `deploy/CLAUDE.md`
-- `test/CLAUDE.md`
+- `tests/README.md`
 - `data_eng/CLAUDE.md`
 
 Más compacto que el codemap. Foco en: dónde están las cosas, key files, dependencies, gotchas.

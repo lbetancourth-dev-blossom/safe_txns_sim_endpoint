@@ -33,7 +33,7 @@ El endpoint se despliega como SageMaker endpoint productivo `data-safe-txns-endp
 safe_txns_sim_endpoint/
 ├── endpoint/        Código del contenedor SageMaker (4 módulos Python)
 ├── deploy/          Scripts de packaging y deploy del endpoint
-├── test/            Tests pytest + scripts manuales (process_endpoint.py)
+├── tests/           Tests pytest + scripts manuales (process_endpoint.py)
 ├── data_eng/        Pipeline Bronze→Silver (offline)
 ├── data/            CSVs de test/reference (no es código)
 ├── changes/         Artefactos SDD por ticket activo (ver SDD-Workflow)
@@ -51,7 +51,7 @@ safe_txns_sim_endpoint/
 |---|---|---|
 | Endpoint | `endpoint/` | Código del contenedor SageMaker (K-means + reglas + similitud Athena) |
 | Deploy | `deploy/` | Scripts SageMaker SDK para empaquetar y desplegar |
-| Test | `test/` | Tests integración + invocación del endpoint real |
+| Test | `tests/` | Tests integración + invocación del endpoint real |
 | Data Engineering | `data_eng/` | Pipeline ETL Bronze→Silver (offline) |
 
 Detalle completo en [`docs/codemap/00-overview/README.md`](docs/codemap/00-overview/README.md).
@@ -64,13 +64,13 @@ Detalle completo en [`docs/codemap/00-overview/README.md`](docs/codemap/00-overv
 aws sso login --sso-session blossom
 
 # Tests
-pytest test/test_athena_similarity_*.py test/test_graceful_degradation.py -v
+pytest tests/similarity/test_athena_similarity_*.py tests/endpoint/test_graceful_degradation.py -v
 
 # Deploy a SageMaker (cuenta dev)
 python deploy/deploy_similarity_endpoint.py
 
 # Smoke test contra endpoint productivo
-python test/process_endpoint.py --input data/wp_input.csv --output data/wp_result.csv
+python tests/process_endpoint.py --input data/wp_input.csv --output data/wp_result.csv
 
 # Extracción offline desde Silver
 python data_eng/extract_safe_silver.py --start 2026-01-01 --end 2026-06-01
@@ -92,7 +92,7 @@ python data_eng/extract_safe_silver.py --start 2026-01-01 --end 2026-06-01
 - **Module nuevo o cambio en endpoint:** `docs/codemap/00-overview/README.md` → módulo correspondiente
 - **¿Cómo funciona la arquitectura?** `docs/codemap/00-overview/Architecture.md`
 - **¿Qué hace tal término?** `docs/codemap/00-overview/Glossary.md`
-- **¿Cómo se invoca el endpoint?** `docs/ENDPOINT_INPUT_FORMAT.md` + `test/process_endpoint.py`
+- **¿Cómo se invoca el endpoint?** `docs/ENDPOINT_INPUT_FORMAT.md` + `tests/process_endpoint.py`
 - **¿Cómo es el flujo SDD?** `docs/codemap/00-overview/SDD-Workflow.md`
 - **Ticket activo:** `changes/<TICKET>/spec.md` (lo que hay que hacer) + `plan.md` (decisiones)
 - **Agente IA en módulo X:** ese módulo tiene su propio `CLAUDE.md` (ej. `endpoint/CLAUDE.md`)

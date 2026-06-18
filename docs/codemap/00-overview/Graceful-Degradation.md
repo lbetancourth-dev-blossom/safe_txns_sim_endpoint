@@ -103,9 +103,9 @@ CloudWatch alarm: disparar sobre `similarity.athena_failure` cuando `count > N/m
 
 ## Tests que enforzan estas invariantes
 
-- `test/test_graceful_degradation.py` — casos de Athena empty, exception, permission.
-- `test/test_athena_similarity_input_contract.py` — D1 validation.
-- `test/test_athena_similarity_logging.py` — los dos paths INFO + WARNING + categories.
+- `tests/endpoint/test_graceful_degradation.py` — casos de Athena empty, exception, permission.
+- `tests/similarity/test_athena_similarity_input_contract.py` — D1 validation.
+- `tests/similarity/test_athena_similarity_logging.py` — los dos paths INFO + WARNING + categories.
 - `endpoint/inference_rules.py` tests embebidos (T3, T_LOGGING en `changes/DATA-1264/spec.md`).
 
 ## Files

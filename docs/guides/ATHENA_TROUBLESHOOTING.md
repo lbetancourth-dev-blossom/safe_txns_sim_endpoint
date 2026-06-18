@@ -1,5 +1,37 @@
 # Athena Similarity Matching Troubleshooting
 
+## Known Issues (Fixed)
+
+### Bug 1: TYPE_MISMATCH on date parameters (fixed in commit 288453c)
+
+**Symptom**: `sim_*` fields all return `None` despite data existing in Athena for the user. No exception raised — Athena silently returns 0 rows.
+
+**Root cause**: Date parameters were passed as Python strings to the PyAthena cursor. Athena's Presto engine received them as `VARCHAR` and failed the implicit comparison against the `createdat` column (stored as `TIMESTAMP`/`DATE`), producing a `TYPE_MISMATCH` error that surfaced as an empty result set rather than an exception.
+
+**Fix**: Use explicit `CAST` in the SQL query:
+```sql
+AND CAST(createdat AS DATE) >= CAST(%(window_start_date)s AS DATE)
+AND CAST(createdat AS DATE) <= CAST(%(window_end_date)s AS DATE)
+```
+
+---
+
+### Bug 2: decisionResult not extracted during field comparison (fixed in commit 29eaf68)
+
+**Symptom**: `sim_score` always `0.0`, no similarity matches ever found even when `sim_match_txn_id` is populated. `decisionResult` fields in reference rows not being compared.
+
+**Root cause**: `_calculate_exact_field_match` compared the incoming transaction fields against the top-level Athena row columns (which are `idolbuser`, `createdat`, `statuswarning`, `metadata`, `transactionid`). The actual feature fields (`num__*`, `cat__*`) live inside the `metadata.decisionResult` JSON blob and were never parsed out of the reference rows, so every comparison yielded 0 matches.
+
+**Fix**: Parse `metadata.decisionResult` for each reference row before comparison:
+```python
+decision_result = json.loads(row["metadata"]).get("decisionResult", {})
+# Then compare input fields against decision_result keys
+```
+
+---
+
+
+
 ## Problem: sim_* Fields Return None
 
 When the endpoint returns `sim_match_txn_id: None, sim_score: None, sim_status: None, sim_decision: None`, it means the Athena query is not finding any matching historical transactions.
@@ -178,16 +210,16 @@ aws logs tail /aws/sagemaker/Endpoints/data-safe-txns-endpoint --follow
 # [SIMILARITY] No Athena data for idolbuser=597178  ← This means query returned 0 rows
 ```
 
-### Step 3: Run Debug Script
+### Step 3: Run process_endpoint with a known user
 ```bash
-# From the repo
-python3 tests/debug_similarity.py
+# From the repo — use a user ID known to have Athena history
+python3 tests/process_endpoint.py \
+  --input data/test_escenarios.csv \
+  --output /tmp/debug_result.csv \
+  --profile blossom-dev
 
-# This will show:
-# 1. If exact fields are extracted ✓
-# 2. If Athena query executes
-# 3. How many rows are returned
-# 4. If matching works
+# Inspect sim_* columns in /tmp/debug_result.csv:
+# sim_match_txn_id, sim_score, sim_status, sim_decision
 ```
 
 ---
@@ -247,8 +279,9 @@ table = os.getenv("SIMILARITY_ATHENA_TABLE", "safetransactionresults")
   "sim_match_txn_id": 1816246,
   "sim_score": 0.8234,
   "sim_status": "SAFE",
-  "sim_decision": "match"
+  "sim_decision": null
 }
+# Note: sim_decision is "Accept"/"Reject" only when score >= 0.90
 ```
 
 ### When Athena Has NO Data ❌

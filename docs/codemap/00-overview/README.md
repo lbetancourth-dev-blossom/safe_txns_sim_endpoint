@@ -3,7 +3,7 @@ title: Codemap Overview
 aliases: [MOC, Map of Content, Index]
 tags: [overview, moc]
 type: overview
-last_mapped_at: 2026-06-17T19:07:41Z
+last_mapped_at: 2026-06-18T00:00:00Z
 last_commit: 2ac735d
 ---
 
@@ -17,7 +17,7 @@ last_commit: 2ac735d
 |---|---|---|---|
 | 01 | [[01-endpoint/README\|Endpoint]] | `endpoint/` | Código que vive en el contenedor SageMaker. K-means + reglas + similitud. |
 | 02 | [[02-deploy/README\|Deploy]] | `deploy/` | Scripts de empaquetado y despliegue del endpoint vía SageMaker SDK. |
-| 03 | [[03-test/README\|Test]] | `test/` | Tests de integración (pytest) + scripts manuales para invocar el endpoint real. |
+| 03 | [[03-test/README\|Test]] | `tests/` | Tests de integración (pytest) + scripts manuales para invocar el endpoint real. |
 | 04 | [[04-data-eng/README\|Data Engineering]] | `data_eng/` | Pipeline Bronze→Silver. Extrae transacciones del datalake y produce Parquet/CSV. |
 
 ## Cross-cutting concepts
@@ -32,6 +32,7 @@ last_commit: 2ac735d
 - [[Graceful-Degradation]] — qué pasa cuando Athena falla o falta `idOLBUserTxns`/`createdAtTxns`
 - [[SDD-Workflow]] — cómo se hacen los cambios en este repo (Blossom SDD+TDD cycle)
 - [[Agent-Memory]] — convención para que un agente de IA entienda este repo
+- [[Similarity-Matching]] — sistema de similarity matching: scoring, campos, ventana sliding, Athena query
 
 ## How to use this codemap
 

@@ -20,7 +20,7 @@ last_commit: 2ac735d
 | Parquet I/O | pyarrow ≥12 | Lectura de Silver layer (offline / data_eng) |
 | AWS SDK | boto3 | S3, SageMaker Runtime, Athena, STS |
 | Deploy | sagemaker SDK | `SKLearnModel` abstraction |
-| Tests | pytest | Suite en `test/` con fixtures + mocks |
+| Tests | pytest | Suite en `tests/` con fixtures + mocks |
 | CI/CD | (no pipeline automatizado en este repo aún) | Deploy manual via scripts en `deploy/` |
 
 ## Manifests

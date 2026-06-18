@@ -130,8 +130,8 @@ sequenceDiagram
 ## Tests
 
 - Tests internos: `endpoint/test_csv_loading.py`
-- Tests externos (en módulo `test/`): ~10 archivos pytest. Ver [[03-test/README]]
-- Correr suite: `pytest test/test_athena_similarity_*.py test/test_graceful_degradation.py -v`
+- Tests externos (en módulo `tests/`): ~10 archivos pytest. Ver [[03-test/README]]
+- Correr suite: `pytest tests/similarity/test_athena_similarity_*.py tests/endpoint/test_graceful_degradation.py -v`
 
 ## Sub-features
 

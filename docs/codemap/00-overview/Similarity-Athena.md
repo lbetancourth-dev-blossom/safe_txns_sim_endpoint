@@ -94,7 +94,7 @@ El endpoint corre en cuenta **development**; Athena/Glue/S3 viven en cuenta **al
 
 - `endpoint/similarity_matcher.py` — el loader, `find_similar_transaction()`, `_hash_idolbuser()`, `classify_exception()`, `_compute_sliding_window()`
 - `endpoint/inference_rules.py` L1049–1130 — el bloque donde se llama (D1 `_validate_similarity_input` + integración con K-means+reglas)
-- `test/test_athena_similarity_*.py` — 7 archivos de tests pytest
+- `tests/similarity/test_athena_similarity_*.py` — 7 archivos de tests pytest
 - `docs/ATHENA_INTEGRATION.md` — guía detallada (escrita en DATA-1264 T6)
 
 ## See also

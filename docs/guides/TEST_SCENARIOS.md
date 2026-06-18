@@ -2,7 +2,7 @@
 
 **Archivo de input:** `data/test_scenarios.csv`
 **Columnas:** 61 (mismo formato que `data/data_collection_idFi52_mar_2026.csv`)
-**Cómo invocar:** `python test/process_endpoint.py --input data/test_scenarios.csv --output data/test_scenarios_result.csv`
+**Cómo invocar:** `python tests/process_endpoint.py --input data/test_scenarios.csv --output data/test_scenarios_result.csv`
 
 Cada fila cubre un escenario distinto del endpoint. Los TransactionIDs son sintéticos (9000001–9000009) para distinguirlos del dato real.
 

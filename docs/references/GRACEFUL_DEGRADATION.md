@@ -175,7 +175,7 @@ When monitoring the endpoint:
 
 ## Testing
 
-Comprehensive tests in `test/test_graceful_degradation.py` verify:
+Comprehensive tests in `tests/endpoint/test_graceful_degradation.py` verify:
 - ✅ No parquet files in S3
 - ✅ All records PENDING (no SAFE/RISKY)
 - ✅ S3 connection errors
