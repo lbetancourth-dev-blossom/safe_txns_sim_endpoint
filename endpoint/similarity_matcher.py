@@ -130,15 +130,31 @@ def _hash_idolbuser(idolbuser) -> str:
 # Athena: window + column normalisation
 # =========================
 
-def _compute_sliding_window(window_months: int = 6) -> Tuple[datetime, datetime]:
+def _compute_sliding_window(window_months: int = 6, reference_dt: Optional[datetime] = None) -> Tuple[datetime, datetime]:
     """
-    Compute (start, end) for the sliding window. End = now() UTC,
-    start = end - relativedelta(months=window_months).
+    Compute (start, end) for the sliding window relative to a transaction date.
 
-    Returns datetime objects in UTC. Formatting to Athena TIMESTAMP literal
-    happens in load_reference_data_from_athena().
+    Args:
+        window_months: Look back period in months (typically 6)
+        reference_dt: Transaction date to use as the window end. If None, uses now() UTC.
+
+    Returns:
+        (start, end) datetime objects in UTC where:
+        - end = reference_dt (the transaction being evaluated)
+        - start = end - window_months (lookback period)
+
+    For similarity matching, we want historical transactions BEFORE the current one:
+    - If evaluating transaction at 2026-04-15, search window is [2025-10-15, 2026-04-15)
     """
-    end = datetime.now(timezone.utc)
+    if reference_dt is None:
+        end = datetime.now(timezone.utc)
+    else:
+        # Ensure reference_dt is timezone-aware (UTC)
+        if reference_dt.tzinfo is None:
+            end = reference_dt.replace(tzinfo=timezone.utc)
+        else:
+            end = reference_dt.astimezone(timezone.utc)
+
     start = end - relativedelta(months=window_months)
     return start, end
 
@@ -176,14 +192,23 @@ def load_reference_data_from_athena(
     window_months: int = 6,
     force_reload: bool = False,
     timeout_seconds: int = 10,
+    transaction_datetime: Optional[datetime] = None,
 ) -> Tuple[Optional[pd.DataFrame], Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]]:
     """
     Load reference transaction data from Athena, filtered by idolbuser and
-    sliding window [now() - window_months, now()].
+    sliding window [transaction_datetime - window_months, transaction_datetime).
 
-    Window is computed AT CALL TIME, not at module load. Critical because the
-    SageMaker container stays warm for days; computing at load would freeze
-    the window.
+    Window is computed AT CALL TIME relative to the transaction being evaluated.
+    This enables historical similarity matching: find transactions BEFORE the
+    current transaction within the lookback period.
+
+    Args:
+        idolbuser: User ID to filter
+        window_months: Lookback period in months (typically 6)
+        force_reload: Skip cache
+        timeout_seconds: Athena query timeout
+        transaction_datetime: Date of transaction being evaluated (window end).
+                            If None, uses now() UTC.
 
     Returns (df, feature_vectors, labels, txn_ids) — same shape as
     load_reference_data_from_s3(). Returns (None, None, None, None) on any
@@ -194,8 +219,8 @@ def load_reference_data_from_athena(
     # Defense-in-depth: int cast raises ValueError/TypeError for non-numeric input
     idolbuser_int = int(idolbuser)
 
-    # Compute sliding window at call time (never at module load)
-    start, end = _compute_sliding_window(window_months)
+    # Compute sliding window relative to transaction date
+    start, end = _compute_sliding_window(window_months, reference_dt=transaction_datetime)
     cache_key = f"athena:{idolbuser_int}:{end.strftime('%Y-%m-%d-%H-%M')}"
 
     if not force_reload and cache_key in _ATHENA_CACHE:
@@ -982,6 +1007,7 @@ def find_similar_transaction(
     idolbuser: Optional[int] = None,
     window_months: int = 6,
     timeout_seconds: int = 10,
+    transaction_datetime: Optional[datetime] = None,
     s3_bucket: Optional[str] = None,
     s3_key: Optional[str] = None,
     s3_uri: Optional[str] = None,
@@ -1029,6 +1055,7 @@ def find_similar_transaction(
                     idolbuser=idolbuser,
                     window_months=window_months,
                     timeout_seconds=timeout_seconds,
+                    transaction_datetime=transaction_datetime,
                     force_reload=force_reload
                 )
                 source_uri = f"athena:idolbuser={idolbuser}:window={window_months}m"

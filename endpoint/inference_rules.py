@@ -1143,10 +1143,13 @@ def predict_fn(input_data, model_artifacts):
 
             # D2 CLOSED: Athena is the only source — no s3_bucket/s3_key kwargs
             try:
-                # Extract idOLBUserTxns with debug logging
+                # Extract idOLBUserTxns and createdAtTxns for similarity window
                 idolbuser_val = input_data.iloc[idx]["idOLBUserTxns"]
                 idolbuser_int = int(idolbuser_val)
-                print(f"[SIMILARITY] Row {idx}: idOLBUserTxns={idolbuser_int}")
+
+                # Extract transaction date for window calculation
+                txn_date_val = out_df.iloc[idx].get("__createdAtTxns_dt")
+                print(f"[SIMILARITY] Row {idx}: idOLBUserTxns={idolbuser_int}, txn_date={txn_date_val}")
 
                 result = _similarity_mod.find_similar_transaction(
                     query_result=query_features,
@@ -1155,6 +1158,7 @@ def predict_fn(input_data, model_artifacts):
                     idolbuser=idolbuser_int,
                     window_months=int(os.getenv("ATHENA_WINDOW_MONTHS", "6")),
                     timeout_seconds=int(os.getenv("ATHENA_TIMEOUT_SECONDS", "10")),
+                    transaction_datetime=txn_date_val,
                 )
                 print(f"[SIMILARITY] Row {idx}: result={result}")
 
