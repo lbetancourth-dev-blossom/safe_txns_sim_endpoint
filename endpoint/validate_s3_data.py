@@ -1,21 +1,21 @@
 """
-S3 Data Validator and Converter
-================================
+CSV Data Validator for Similarity Matching
+==========================================
 
-This script helps validate and prepare S3 reference data for similarity matching.
-It ensures that the metadata.decisionResult field contains the expected schema
-from inference_rules.py preprocessing.
+Offline CLI tool to validate reference CSVs before uploading to the data lake.
+Checks that metadata.decisionResult contains the expected schema from
+inference_rules.py preprocessing (num__* and cat__* features).
 
 Usage:
+    python validate_s3_data.py --local-csv local_file.csv --show-schema
+    python validate_s3_data.py --local-csv local_file.csv --output report.json
     python validate_s3_data.py --s3-uri s3://bucket/path/file.csv --output report.json
-    python validate_s3_data.py --local-csv local_file.csv --check-schema
 """
 
 import argparse
 import json
 import pandas as pd
 import boto3
-from io import StringIO
 from typing import Dict, List
 import sys
 
@@ -46,11 +46,12 @@ def load_csv_from_s3(s3_uri: str) -> pd.DataFrame:
     
     bucket, key = parts
     
+    import io
     s3_client = boto3.client("s3")
     response = s3_client.get_object(Bucket=bucket, Key=key)
     csv_content = response["Body"].read().decode("utf-8")
-    
-    return pd.read_csv(StringIO(csv_content))
+
+    return pd.read_csv(io.StringIO(csv_content))
 
 
 def validate_csv_structure(df: pd.DataFrame) -> Dict:
@@ -297,18 +298,20 @@ def main():
     if args.show_schema:
         print("\n=== Expected Schema Information ===")
         schema_info = get_schema_info()
-        print(f"\nNumerical Features ({schema_info['num_features']['count']}):")
-        for f in schema_info['num_features']['fields'][:5]:
+        num_count = schema_info['num_features_count']
+        cat_count = schema_info['cat_features_count']
+        print(f"\nNumerical Features ({num_count}):")
+        for f in schema_info['numerical_features'][:5]:
             print(f"  - {f}")
-        print(f"  ... and {schema_info['num_features']['count'] - 5} more")
-        
-        print(f"\nCategorical Features ({schema_info['cat_features']['count']}):")
-        for f in schema_info['cat_features']['fields'][:5]:
+        print(f"  ... and {num_count - 5} more")
+
+        print(f"\nCategorical Features ({cat_count}):")
+        for f in schema_info['categorical_features'][:5]:
             print(f"  - {f}")
-        print(f"  ... and {schema_info['cat_features']['count'] - 5} more")
-        
-        print(f"\nPost-processing Fields ({schema_info['post_fields']['count']}):")
-        for f in schema_info['post_fields']['fields']:
+        print(f"  ... and {cat_count - 5} more")
+
+        print(f"\nPost-processing Fields ({len(EXPECTED_POST_FIELDS)}):")
+        for f in EXPECTED_POST_FIELDS:
             print(f"  - {f}")
         
         print(f"\nCore Fields for Similarity:")

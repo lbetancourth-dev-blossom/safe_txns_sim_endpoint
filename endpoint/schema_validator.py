@@ -340,10 +340,10 @@ if __name__ == "__main__":
     # Display schema info
     schema_info = get_schema_info()
     print(f"Expected Schema:")
-    print(f"  - Numerical features: {schema_info['num_features']['count']}")
-    print(f"  - Categorical features: {schema_info['cat_features']['count']}")
-    print(f"  - Post-processing fields: {schema_info['post_fields']['count']}")
-    print(f"  - Total expected fields: {schema_info['total_expected_fields']}")
+    print(f"  - Numerical features: {schema_info['num_features_count']}")
+    print(f"  - Categorical features: {schema_info['cat_features_count']}")
+    print(f"  - Post-processing fields: {len(EXPECTED_POST_FIELDS)}")
+    print(f"  - Total expected fields: {schema_info['total_features']}")
     print(f"  - Core fields for similarity: {len(CORE_FIELDS_FOR_SIMILARITY)}")
     print(f"\nCore fields: {CORE_FIELDS_FOR_SIMILARITY}")
     

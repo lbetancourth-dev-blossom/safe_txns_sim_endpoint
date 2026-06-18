@@ -1,22 +1,16 @@
 """
 Similarity Matcher for Safe Transactions
-==========================================
+=========================================
+Finds the most similar historical transaction for each incoming transaction
+by querying Athena (dlh_silver_safe_alpha.safetransactionresults) with a
+6-month sliding window per transaction date, then scoring 49 fields using
+exact-match comparison with float tolerance (1e-9).
 
-This module provides similarity-based matching against historical transactions
-stored in S3. It compares incoming transactions with a reference dataset and
-returns matching labels when similarity exceeds a configurable threshold.
+Output fields: sim_match_txn_id, sim_score, sim_status, sim_decision.
+sim_decision = 'Accept'/'Reject' only when sim_score >= threshold (default 0.90).
 
-Key features:
-- Loads reference data from S3 (with caching)
-- Parses JSON metadata.decisionResult fields
-- Calculates cosine similarity between transaction vectors
-- Returns statusWarning label + similarity score when match found
-- Configurable similarity threshold (default: 0.90)
-
-Integration:
-- Called after preprocessing/validation in inference_rules.py
-- Uses transformed feature vectors for comparison
-- Can be disabled via environment variable DISABLE_SIMILARITY=1
+Graceful degradation: if Athena is unavailable, all sim_* fields return None.
+The endpoint continues with K-Means + statistical rules.
 """
 
 import os
@@ -806,13 +800,6 @@ def get_threshold_from_env(default: float = DEFAULT_THRESHOLD) -> float:
     except ValueError:
         logger.warning(f"[SIMILARITY] Invalid SIMILARITY_THRESHOLD, using default: {default}")
         return default
-
-
-def get_s3_config_from_env() -> Tuple[str, str]:
-    """Get S3 bucket and key from environment variables or defaults."""
-    bucket = os.getenv("SIMILARITY_S3_BUCKET", DEFAULT_S3_BUCKET)
-    key = os.getenv("SIMILARITY_S3_KEY", DEFAULT_S3_KEY)
-    return bucket, key
 
 
 # =========================

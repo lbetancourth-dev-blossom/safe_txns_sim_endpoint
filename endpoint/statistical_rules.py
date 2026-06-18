@@ -155,16 +155,6 @@ def score_transaction_v8(transaction: Dict[str, Any]) -> Dict[str, Any]:
     #user_avg = _to_float(transaction.get("user_avg_amount_txn_per_active_day_last_6_months", 0))
     user_avg = _get_user_daily_avg(transaction)
     
-    # ---- Rule 1: ONLY user_avg; from ratio > 0.5 (lower weight) ----
-    # if amount > 0 and user_avg > 0:
-    #     ratio = amount / user_avg
-    #     pts = _r1_points_from_ratio(ratio)
-    #     if user_type not in ("personal", "mixed", "mixto"):
-    #         pts = int(round(pts * 0.9))
-    #     contrib["rule_1"] = pts
-    #     if pts > 0:
-    #         expl.append(f"R1: {ratio:.2f}× user average ({user_avg:,.2f}) +{pts}")
-
     # ---- Rule 2: Nighttime ----
     if _to_int(transaction.get("is_night", 0)) == 1:
         contrib["rule_2"] = 20
@@ -213,14 +203,6 @@ def score_transaction_v8(transaction: Dict[str, Any]) -> Dict[str, Any]:
             contrib["rule_7"] += 10
             expl.append(f"R7: {txn_5m} txns/5m +10")
 
-        # if user_avg > 0 and total_amount_5m > 0:
-        #     if total_amount_5m > user_avg * 3:
-        #         contrib["rule_7"] += 15
-        #         expl.append(f"R7+: 5m volume ${total_amount_5m:,.0f} (>3×) +15")
-        #     elif total_amount_5m > user_avg * 2:
-        #         contrib["rule_7"] += 8
-        #         expl.append(f"R7+: 5m volume ${total_amount_5m:,.0f} (>2×) +8")
-
     # ---- Rule 8: History with recipient (2 months) ----
     count_to_recipient = _to_int(transaction.get("count_txn_to_recipient_account_in_last_2_months", 0))
     if count_to_recipient == 0:
@@ -232,18 +214,6 @@ def score_transaction_v8(transaction: Dict[str, Any]) -> Dict[str, Any]:
     elif count_to_recipient <= 5:
         contrib["rule_8"] = 3
         expl.append(f"R8: occasional to recipient ({count_to_recipient}) +3")
-
-    # ---- Rule 9: Contact details updated ----
-    # phone_updated = _to_int(transaction.get("is_personal_user_phone_primary_updated_last_week", 0))
-    # email_updated = _to_int(transaction.get("is_personal_user_email_primary_updated_last_week", 0))
-    # if phone_updated == 1 or email_updated == 1:
-    #     contrib["rule_9"] = 15
-    #     changes = []
-    #     if phone_updated == 1:
-    #         changes.append("phone")
-    #     if email_updated == 1:
-    #         changes.append("email")
-    #     expl.append(f"R9: updated ({', '.join(changes)}) +15")
 
     # ---- Rule 10: Weekend ----
     if _to_int(transaction.get("weekend", 0)) == 1:
