@@ -5,7 +5,7 @@ Update this file when the Athena table, database, or S3 paths change.
 """
 
 # ── Endpoint identity ──────────────────────────────────────────────────────────
-ENDPOINT_NAME  = "SAFE_TXNS_ENDPOINT_DEV"
+ENDPOINT_NAME  = "SAFE-TXNS-ENDPOINT-DEV"
 INSTANCE_TYPE  = "ml.m5.large"
 FRAMEWORK      = "1.2-1"
 
