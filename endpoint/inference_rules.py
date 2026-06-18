@@ -19,7 +19,7 @@ import pandas as pd
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler
 from scipy import sparse
-from typing import Optional, Set, List, Tuple
+from typing import Optional, Set, List, Tuple, Dict, Any
 
 # ---- Lazy import para reglas (opcionalmente desactivables con env DISABLE_RULES=1) ----
 HAS_RULES = None
@@ -687,6 +687,73 @@ def _clamp_to_band(score: int, decision: str) -> int:
     s = 0 if pd.isna(score) else int(round(score))
     return max(lo, min(hi, s))
 
+
+# =========================
+# Similarity Input Validation (D1 graceful — never raises)
+# =========================
+
+def _validate_similarity_input(input_data: pd.DataFrame) -> Tuple[bool, List[int]]:
+    """
+    Validate that idOLBUserTxns is present and non-null for each row.
+    Also validates createdAtTxns per D1 — both fields must be valid for similarity.
+
+    Returns (all_valid, missing_rows). For rows in missing_rows, similarity
+    will return sim_*=null but K-means/rules outputs are preserved.
+
+    NOTE: Per D1 default, we do NOT raise. We mark rows as similarity-skip.
+    """
+    import logging as _logging
+    _val_logger = _logging.getLogger(__name__)
+
+    missing_rows: List[int] = []
+
+    for positional_idx, (idx, row) in enumerate(input_data.iterrows()):
+        row_bad = False
+        row_index = positional_idx  # use positional index as returned
+
+        # Check idOLBUserTxns
+        if "idOLBUserTxns" not in input_data.columns:
+            _val_logger.info(
+                f"[SIMILARITY][VALIDATION] Row {row_index}: missing idOLBUserTxns column, sim_*=null for this row"
+            )
+            row_bad = True
+        else:
+            val = row.get("idOLBUserTxns")
+            if val is None or (isinstance(val, float) and pd.isna(val)) or pd.isnull(val):
+                _val_logger.info(
+                    f"[SIMILARITY][VALIDATION] Row {row_index}: missing idOLBUserTxns, sim_*=null for this row"
+                )
+                row_bad = True
+            else:
+                try:
+                    int(val)
+                except (ValueError, TypeError):
+                    _val_logger.info(
+                        f"[SIMILARITY][VALIDATION] Row {row_index}: idOLBUserTxns not castable to int, sim_*=null for this row"
+                    )
+                    row_bad = True
+
+        # Check createdAtTxns (D1: also required for similarity window)
+        if not row_bad:
+            if "createdAtTxns" not in input_data.columns:
+                _val_logger.info(
+                    f"[SIMILARITY][VALIDATION] Row {row_index}: missing createdAtTxns column, sim_*=null for this row"
+                )
+                row_bad = True
+            else:
+                cv = row.get("createdAtTxns")
+                if cv is None or (isinstance(cv, float) and pd.isna(cv)) or pd.isnull(cv):
+                    _val_logger.info(
+                        f"[SIMILARITY][VALIDATION] Row {row_index}: missing createdAtTxns, sim_*=null for this row"
+                    )
+                    row_bad = True
+
+        if row_bad:
+            missing_rows.append(row_index)
+
+    all_valid = len(missing_rows) == 0
+    return all_valid, missing_rows
+
 def _step_up(decision: str) -> str:
     order = ["Accept", "User Auth", "Admin Review", "Reject"]
     i = order.index(decision) if decision in order else 0
@@ -1046,84 +1113,114 @@ def predict_fn(input_data, model_artifacts):
         lambda r: pd.Series(_rebuild_audit_columns(r)), axis=1
     )
 
-    # ===== Similarity Matching (MANDATORY) =====
+    # ===== Similarity Matching (MANDATORY — D2: Athena single-source, no toggle) =====
     similarity_results = []
     similarity_threshold = float(os.getenv("SIMILARITY_THRESHOLD", "0.90"))
-    s3_bucket = os.getenv("SIMILARITY_S3_BUCKET", "blossom-analytics-datalake-alpha")
-    s3_key = os.getenv("SIMILARITY_S3_KEY", "datalake/silver/SAFE/safetransactionresults/data/")  # Parquet directory
-    
+
+    # D1: validate input contract — graceful, never raises
+    sim_input_ok, sim_skip_rows = _validate_similarity_input(input_data)
+
     if _ensure_similarity_loaded():
         print(f"[SIMILARITY] Checking similarity for {len(out_df)} transactions (threshold: {similarity_threshold})")
-        
+
         for idx, row in out_df.iterrows():
+            # D1 CLOSED: skip rows missing idOLBUserTxns or createdAtTxns
+            if idx in sim_skip_rows:
+                similarity_results.append({
+                    "sim_match_txn_id": None,
+                    "sim_score": None,
+                    "sim_status": None,
+                    "sim_decision": None,
+                })
+                continue
+
             # Prepare query with ONLY features (num__ and cat__), NOT post-processing fields
             query_features = {}
-            
-            # Add all num__ and cat__ features from df_transformed
             for col in df_transformed.columns:
                 if col.startswith("num__") or col.startswith("cat__"):
                     val = df_transformed.loc[idx, col]
                     query_features[col] = float(val) if pd.notna(val) else 0.0
-            
-            # DO NOT add post-processing fields (Cluster, Distance_to_Centroid, risk_score, etc.)
-            # These are generated by K-means and should not affect similarity matching
-            
-            # Call similarity matcher
+
+            # D2 CLOSED: Athena is the only source — no s3_bucket/s3_key kwargs
             try:
+                # Extract idOLBUserTxns and createdAtTxns for similarity window
+                idolbuser_val = input_data.iloc[idx]["idOLBUserTxns"]
+                idolbuser_int = int(idolbuser_val)
+
+                # Extract transaction date for window calculation
+                txn_date_val = out_df.iloc[idx].get("__createdAtTxns_dt")
+                print(f"[SIMILARITY] Row {idx}: idOLBUserTxns={idolbuser_int}, txn_date={txn_date_val}")
+
                 result = _similarity_mod.find_similar_transaction(
                     query_result=query_features,
                     threshold=similarity_threshold,
-                    s3_bucket=s3_bucket,
-                    s3_key=s3_key,
-                    top_k=5
+                    top_k=5,
+                    idolbuser=idolbuser_int,
+                    window_months=int(os.getenv("ATHENA_WINDOW_MONTHS", "6")),
+                    timeout_seconds=int(os.getenv("ATHENA_TIMEOUT_SECONDS", "10")),
+                    transaction_datetime=txn_date_val,
                 )
-                
-                # Extract results from dictionary
-                matched = result.get("matched", False)
-                similarity_score = result.get("similarity_score", 0.0)
-                status_warning = result.get("status_warning", "NONE")
-                matched_txn_id = result.get("matched_transaction_id", None)
-                top_matches = result.get("top_matches", [])
-                
-                # Calculate sim_decision based on score and status
-                sim_decision = None
-                sim_status = None
-                if matched and status_warning in ["SAFE", "RISKY"]:
-                    sim_status = status_warning  # Store the original status (SAFE/RISKY)
-                    if similarity_score >= 0.90:
-                        sim_decision = "Accept" if status_warning == "SAFE" else "Reject"
-                
-                # Log match if found
-                if matched:
-                    print(f"[SIMILARITY] Row {idx}: Match found (score: {similarity_score:.4f}, matched_id: {matched_txn_id}, status: {sim_status}, decision: {sim_decision})")
-                
-                # Store similarity fields with new names
+                print(f"[SIMILARITY] Row {idx}: result={result}")
+
+                sim_match_txn_id = result.get("sim_match_txn_id", None)
+                sim_score = result.get("sim_score", None)
+                sim_status = result.get("sim_status", None)
+                sim_decision = result.get("sim_decision", None)
+
                 similarity_result = {
-                    "sim_match_txn_id": matched_txn_id,
-                    "sim_score": float(similarity_score) if similarity_score is not None else None,
+                    "sim_match_txn_id": sim_match_txn_id,
+                    "sim_score": float(sim_score) if sim_score is not None else None,
                     "sim_status": sim_status,
-                    "sim_decision": sim_decision
+                    "sim_decision": sim_decision,
                 }
-                
-            except Exception as e:
-                print(f"[SIMILARITY] Error processing row {idx}: {repr(e)}")
+
+            except TimeoutError as e:
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    f"[SIMILARITY][ATHENA][TIMEOUT] row={idx} error={repr(e)}"
+                )
+                print(f"[SIMILARITY][TIMEOUT] Row {idx}: {repr(e)}")
                 similarity_result = {
                     "sim_match_txn_id": None,
                     "sim_score": None,
                     "sim_status": None,
-                    "sim_decision": None
+                    "sim_decision": None,
                 }
-            
+            except KeyError as e:
+                print(f"[SIMILARITY][KEYERROR] Row {idx}: Column not found: {repr(e)}")
+                print(f"[SIMILARITY][DEBUG] Available columns: {list(input_data.columns)}")
+                similarity_result = {
+                    "sim_match_txn_id": None,
+                    "sim_score": None,
+                    "sim_status": None,
+                    "sim_decision": None,
+                }
+            except ValueError as e:
+                print(f"[SIMILARITY][VALUEERROR] Row {idx}: Invalid value: {repr(e)}")
+                similarity_result = {
+                    "sim_match_txn_id": None,
+                    "sim_score": None,
+                    "sim_status": None,
+                    "sim_decision": None,
+                }
+            except Exception as e:
+                print(f"[SIMILARITY][ERROR] Row {idx}: {type(e).__name__}: {repr(e)}")
+                similarity_result = {
+                    "sim_match_txn_id": None,
+                    "sim_score": None,
+                    "sim_status": None,
+                    "sim_decision": None,
+                }
+
             similarity_results.append(similarity_result)
     else:
         print("[SIMILARITY] Module not available, skipping similarity matching")
-        # Add empty similarity results
         for idx in range(len(out_df)):
             similarity_results.append({
                 "sim_match_txn_id": None,
                 "sim_score": None,
                 "sim_status": None,
-                "sim_decision": None
+                "sim_decision": None,
             })
     
     # Similarity matching completed (results used internally for decision override)
@@ -1180,6 +1277,9 @@ def predict_fn(input_data, model_artifacts):
     final_df["Distance_to_Centroid"] = out_df["Distance_to_Centroid"].astype(float)
     final_df["risk_score"] = out_df["risk_score"].astype(int)
     final_df["risk_decision"] = out_df["risk_decision"].astype(str)
+    # kmeans_* expose the pre-rules K-means output for observability (R5)
+    final_df["kmeans_risk_score"] = out_df["kmeans_risk_score"].astype(int) if "kmeans_risk_score" in out_df.columns else out_df["risk_score"].astype(int)
+    final_df["kmeans_risk_decision"] = out_df["kmeans_risk_decision"].astype(str) if "kmeans_risk_decision" in out_df.columns else out_df["risk_decision"].astype(str)
     final_df["is_outlier"] = out_df["is_outlier"].astype(int)
     final_df["top_contributors"] = out_df["top_contributors"]
     final_df["audit_category"] = out_df["audit_category"]
@@ -1198,6 +1298,7 @@ def predict_fn(input_data, model_artifacts):
     if "TransactionID" in final_df.columns:
         output_cols.append("TransactionID")
     output_cols.extend(requested_cols)
+    output_cols.extend(["kmeans_risk_score", "kmeans_risk_decision"])
     if similarity_results:
         output_cols.extend(["sim_match_txn_id", "sim_score", "sim_status", "sim_decision"])
     

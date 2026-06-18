@@ -1,0 +1,343 @@
+# Athena Similarity Matching Troubleshooting
+
+## Known Issues (Fixed)
+
+### Bug 1: TYPE_MISMATCH on date parameters (fixed in commit 288453c)
+
+**Symptom**: `sim_*` fields all return `None` despite data existing in Athena for the user. No exception raised — Athena silently returns 0 rows.
+
+**Root cause**: Date parameters were passed as Python strings to the PyAthena cursor. Athena's Presto engine received them as `VARCHAR` and failed the implicit comparison against the `createdat` column (stored as `TIMESTAMP`/`DATE`), producing a `TYPE_MISMATCH` error that surfaced as an empty result set rather than an exception.
+
+**Fix**: Use explicit `CAST` in the SQL query:
+```sql
+AND CAST(createdat AS DATE) >= CAST(%(window_start_date)s AS DATE)
+AND CAST(createdat AS DATE) <= CAST(%(window_end_date)s AS DATE)
+```
+
+---
+
+### Bug 2: decisionResult not extracted during field comparison (fixed in commit 29eaf68)
+
+**Symptom**: `sim_score` always `0.0`, no similarity matches ever found even when `sim_match_txn_id` is populated. `decisionResult` fields in reference rows not being compared.
+
+**Root cause**: `_calculate_exact_field_match` compared the incoming transaction fields against the top-level Athena row columns (which are `idolbuser`, `createdat`, `statuswarning`, `metadata`, `transactionid`). The actual feature fields (`num__*`, `cat__*`) live inside the `metadata.decisionResult` JSON blob and were never parsed out of the reference rows, so every comparison yielded 0 matches.
+
+**Fix**: Parse `metadata.decisionResult` for each reference row before comparison:
+```python
+decision_result = json.loads(row["metadata"]).get("decisionResult", {})
+# Then compare input fields against decision_result keys
+```
+
+---
+
+
+
+## Problem: sim_* Fields Return None
+
+When the endpoint returns `sim_match_txn_id: None, sim_score: None, sim_status: None, sim_decision: None`, it means the Athena query is not finding any matching historical transactions.
+
+```json
+{
+  "TransactionID": 1032495,
+  "idOLBUserTxns": 597178,
+  "sim_match_txn_id": null,  // ← Problem
+  "sim_score": null,         // ← Problem
+  "sim_status": null,        // ← Problem
+  "sim_decision": null       // ← Problem
+}
+```
+
+## Root Causes
+
+### 1. No Historical Data in Athena
+
+**Symptom**: Athena query returns 0 rows for the user
+
+**Check**:
+```sql
+-- Run in Athena console
+SELECT COUNT(*) as transaction_count
+FROM dlh_silver_safe_alpha.safetransactionresults
+WHERE idolbuser = 597178
+  AND statuswarning IN ('SAFE', 'RISKY');
+```
+
+**Expected**: COUNT > 0  
+**Actual**: COUNT = 0 → No data for this user
+
+**Solution**:
+- Verify user ID is correct
+- Check if data exists in the Silver layer
+- Verify table name: `dlh_silver_safe_alpha.safetransactionresults`
+- Check date range: is data between 2024-12-18 and 2026-06-18?
+
+---
+
+### 2. Athena Configuration Issues
+
+**Check the environment variables** in the SageMaker endpoint:
+
+```
+SIMILARITY_ATHENA_DATABASE=dlh_silver_safe_alpha
+SIMILARITY_ATHENA_TABLE=safetransactionresults
+SIMILARITY_ATHENA_S3_STAGING=s3://blossom-analytics-datalake-alpha/datalake/gold/athena-metadata/
+SIMILARITY_ATHENA_REGION=us-east-2
+```
+
+**Verify each**:
+
+```bash
+# 1. Database exists
+aws athena list-databases \
+  --region us-east-2 \
+  --catalog AwsDataCatalog | grep dlh_silver_safe_alpha
+
+# 2. Table exists
+aws athena start-query-execution \
+  --query-string "SELECT 1 FROM dlh_silver_safe_alpha.safetransactionresults LIMIT 1" \
+  --query-execution-context Database=dlh_silver_safe_alpha \
+  --result-configuration OutputLocation=s3://blossom-analytics-datalake-alpha/datalake/gold/athena-metadata/ \
+  --region us-east-2
+
+# 3. S3 staging directory is accessible
+aws s3 ls s3://blossom-analytics-datalake-alpha/datalake/gold/athena-metadata/ \
+  --region us-east-2
+```
+
+---
+
+### 3. IAM Permissions
+
+**Required permissions for the SageMaker endpoint role**:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "athena:StartQueryExecution",
+        "athena:GetQueryExecution",
+        "athena:GetQueryResults",
+        "athena:StopQueryExecution"
+      ],
+      "Resource": "arn:aws:athena:us-east-2:*:workgroup/primary"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::blossom-analytics-datalake-alpha",
+        "arn:aws:s3:::blossom-analytics-datalake-alpha/*"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "glue:GetDatabase",
+        "glue:GetTable",
+        "glue:GetPartitions"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+---
+
+### 4. Date Range Issues
+
+The query uses a **sliding window**: `[transaction_date - 6 months, transaction_date]`
+
+For transaction on **2026-06-18**, the window is **[2025-12-18, 2026-06-18]**
+
+**Check if data exists in this range**:
+
+```sql
+SELECT 
+  COUNT(*) as count,
+  MIN(CAST(createdat AS DATE)) as earliest,
+  MAX(CAST(createdat AS DATE)) as latest
+FROM dlh_silver_safe_alpha.safetransactionresults
+WHERE idolbuser = 597178
+  AND statuswarning IN ('SAFE', 'RISKY')
+  AND CAST(createdat AS DATE) >= '2025-12-18'
+  AND CAST(createdat AS DATE) <= '2026-06-18';
+```
+
+Expected: count > 0, and min/max within range
+
+---
+
+## Debugging Steps
+
+### Step 1: Verify Athena Data
+```bash
+# In SageMaker Notebook or local environment (if you have Athena access)
+import boto3
+import pandas as pd
+from pyathena import connect
+
+# Connect to Athena
+conn = connect(s3_staging_dir='s3://blossom-analytics-datalake-alpha/datalake/gold/athena-metadata/', region_name='us-east-2')
+cursor = conn.cursor()
+
+# Query
+cursor.execute("""
+    SELECT COUNT(*) as count
+    FROM dlh_silver_safe_alpha.safetransactionresults
+    WHERE idolbuser = 597178
+    AND statuswarning IN ('SAFE', 'RISKY')
+    LIMIT 10
+""")
+
+df = pd.read_sql(cursor)
+print(df)
+```
+
+### Step 2: Check CloudWatch Logs
+```bash
+# See what the endpoint is logging
+aws logs tail /aws/sagemaker/Endpoints/SAFE_TXNS_ENDPOINT_DEV --follow
+
+# Look for:
+# [SIMILARITY] Loading from Athena for idolbuser=597178
+# [SIMILARITY] No Athena data for idolbuser=597178  ← This means query returned 0 rows
+```
+
+### Step 3: Run process_endpoint with a known user
+```bash
+# From the repo — use a user ID known to have Athena history
+python3 tests/process_endpoint.py \
+  --input data/test_escenarios.csv \
+  --output /tmp/debug_result.csv \
+  --profile blossom-dev
+
+# Inspect sim_* columns in /tmp/debug_result.csv:
+# sim_match_txn_id, sim_score, sim_status, sim_decision
+```
+
+---
+
+## Common Solutions
+
+### Solution 1: Add Test Data to Athena
+
+If there's no historical data, insert test transactions:
+
+```sql
+-- Create test transactions for user 597178
+INSERT INTO dlh_silver_safe_alpha.safetransactionresults
+  (idolbuser, createdat, statuswarning, metadata, transactionid)
+VALUES
+  (597178, '2026-06-15 10:00:00+00:00', 'SAFE', '{"decisionResult": {...}}', 1001),
+  (597178, '2026-06-10 14:30:00+00:00', 'RISKY', '{"decisionResult": {...}}', 1002);
+```
+
+### Solution 2: Verify Configuration Variables
+
+In SageMaker endpoint environment, verify variables are set:
+
+```python
+import os
+
+print("Athena Configuration:")
+print(f"  Database: {os.getenv('SIMILARITY_ATHENA_DATABASE')}")
+print(f"  Table: {os.getenv('SIMILARITY_ATHENA_TABLE')}")
+print(f"  S3 Staging: {os.getenv('SIMILARITY_ATHENA_S3_STAGING')}")
+print(f"  Region: {os.getenv('SIMILARITY_ATHENA_REGION')}")
+```
+
+### Solution 3: Update Table/Database Names
+
+If using different names, update in `inference_rules.py`:
+
+```python
+# Line ~1123 in inference_rules.py
+database = os.getenv("SIMILARITY_ATHENA_DATABASE", "dlh_silver_safe_alpha")
+table = os.getenv("SIMILARITY_ATHENA_TABLE", "safetransactionresults")
+```
+
+---
+
+## Expected Behavior
+
+### When Athena Has Data ✅
+
+```python
+# Logs show:
+# [SIMILARITY] Loading from Athena for idolbuser=597178
+# [SIMILARITY] Exact field match: checked 5 reference rows, best match score=0.8234 (41/49 fields matched)
+
+# Response:
+{
+  "sim_match_txn_id": 1816246,
+  "sim_score": 0.8234,
+  "sim_status": "SAFE",
+  "sim_decision": null
+}
+# Note: sim_decision is "Accept"/"Reject" only when score >= 0.90
+```
+
+### When Athena Has NO Data ❌
+
+```python
+# Logs show:
+# [SIMILARITY] Loading from Athena for idolbuser=597178
+# [SIMILARITY] No Athena data for idolbuser=597178
+
+# Response:
+{
+  "sim_match_txn_id": None,
+  "sim_score": None,
+  "sim_status": None,
+  "sim_decision": None
+}
+```
+
+This is **graceful degradation** — the endpoint still works, but without similarity data.
+
+---
+
+## Testing Locally
+
+To test similarity matching without deploying to SageMaker:
+
+```bash
+# 1. Have AWS credentials configured
+aws configure
+
+# 2. Run debug script
+python3 tests/debug_similarity.py
+
+# 3. Check output for:
+# - "No data from Athena" → Check data existence
+# - "Best match score=X" → Matching works!
+# - NoCredentialsError → Configure AWS credentials
+```
+
+---
+
+## Quick Checklist
+
+- [ ] User ID (597178) has transactions in Athena table
+- [ ] Transactions are within the 6-month window (2025-12-18 to 2026-06-18)
+- [ ] statuswarning is 'SAFE' or 'RISKY'
+- [ ] Table name is correct: `dlh_silver_safe_alpha.safetransactionresults`
+- [ ] S3 staging directory exists and is accessible
+- [ ] SageMaker role has Athena + S3 permissions
+- [ ] Environment variables are set correctly in endpoint
+- [ ] No Athena network/VPC issues blocking the connection
+
+---
+
+## References
+
+- [Athena SQL Reference](https://docs.aws.amazon.com/athena/latest/ug/functions-operators-reference.html)
+- [PyAthena Documentation](https://pyathena.readthedocs.io/)
+- [SageMaker Execution Role Permissions](https://docs.aws.amazon.com/sagemaker/latest/dg/sagemaker-roles.html)
