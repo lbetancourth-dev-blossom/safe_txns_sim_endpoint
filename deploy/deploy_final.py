@@ -8,12 +8,12 @@ import os
 import boto3
 import time
 from datetime import datetime
+from endpoint_config import (
+    ENDPOINT_NAME, BUCKET, MODEL_S3_KEY, MODEL_S3_URI,
+    ARTIFACT_S3_PATHS, ENDPOINT_ENV,
+)
 
-# Configuration
-ENDPOINT_NAME = "SAFE_TXNS_ENDPOINT_DEV"
-BUCKET = "blossom-analytics-safe-dev-nv"
-MODEL_PREFIX = "safe_txns/similarity/endpoint/v2"
-LOCAL_TAR = "model_with_exact_matching.tar.gz"
+LOCAL_TAR = "model.tar.gz"
 
 CODE_FILES = [
     "endpoint/inference_rules.py",
@@ -23,17 +23,7 @@ CODE_FILES = [
     "endpoint/requirements.txt",
 ]
 
-# Model artifacts from S3 (required for model_fn to work)
-MODEL_ARTIFACTS = {
-    # K-Means model files
-    "kmeans_model.joblib": "safe_txns/kmeans/kmeans_analysis/V2/artifact/kmeans_model.joblib",
-    "kmeans_artifacts.json": "safe_txns/kmeans/kmeans_analysis/V2/artifact/kmeans_artifacts.json",
-    "centroids.csv": "safe_txns/kmeans/centroids/V2/centroids.csv",
-
-    # Feature processing
-    "preprocessing_pipeline.joblib": "safe_txns/preprocessing/NOVEMBER/preprocessing_pipeline.joblib",
-    "selected_features.csv": "safe_txns/feature_selection/NOVEMBER/selected_features.csv",
-}
+MODEL_ARTIFACTS = ARTIFACT_S3_PATHS
 
 print("=" * 80)
 print("DEPLOYING SAFE TRANSACTIONS ENDPOINT WITH EXACT FIELD MATCHING")
@@ -135,13 +125,7 @@ sklearn_model = SKLearnModel(
     py_version="py3",
     sagemaker_session=sagemaker_session,
     env={
-        "SIMILARITY_THRESHOLD": "0.90",
-        "SIMILARITY_ATHENA_DATABASE": "dlh_silver_safe_alpha",
-        "SIMILARITY_ATHENA_TABLE": "safetransactionresults",
-        "SIMILARITY_ATHENA_S3_STAGING": "s3://blossom-analytics-datalake-alpha/datalake/gold/athena-metadata/",
-        "SIMILARITY_ATHENA_REGION": "us-east-2",
-        "ATHENA_WINDOW_MONTHS": "6",
-        "ATHENA_TIMEOUT_SECONDS": "10",
+        **ENDPOINT_ENV,
     }
 )
 
